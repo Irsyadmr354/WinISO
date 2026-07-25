@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "winiso-toolkit"
+version = "1.0.0"
+description = "Windows ISO Compressor & Auto-Bootable USB Creator"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "WinISO Toolkit" }]
+dependencies = [
+    "pycdlib>=1.14.0",
+    "PyQt6>=6.6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pyinstaller>=6.0", "pytest>=7.0"]
+
+[project.scripts]
+winiso-toolkit = "winiso_toolkit.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["winiso_toolkit*"]

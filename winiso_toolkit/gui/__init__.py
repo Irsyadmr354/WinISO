@@ -1,0 +1,5 @@
+"""PyQt6 GUI wizard (Module 4)."""
+
+from winiso_toolkit.gui.main_window import MainWindow, run_gui
+
+__all__ = ["MainWindow", "run_gui"]
