@@ -230,7 +230,7 @@ def main(argv: list[str] | None = None) -> int:
                 from winiso_toolkit.usb.health import USBHealthChecker
                 print("\nRunning USB health diagnostic...")
                 hc = USBHealthChecker()
-                rep = hc.run_quick_health_check(Path(args.target))
+                rep = hc.run_quick_health_check(usb.path, mount_point=usb.mount_point)
                 print(f"Diagnostic result: {rep.status_message}")
 
             if args.wtg:

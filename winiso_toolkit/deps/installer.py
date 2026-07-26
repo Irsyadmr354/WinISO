@@ -22,6 +22,10 @@ _WIMLIB_WINDOWS_URLS: dict[str, str] = {
     "aarch64": f"https://wimlib.net/downloads/wimlib-{_WIMLIB_VERSION}-windows-aarch64-bin.zip",
 }
 
+# Portable xorriso for Windows (Cygwin build — exe plus required runtime DLLs)
+_XORRISO_WINDOWS_BASE = "https://raw.githubusercontent.com/PeyTy/xorriso-exe-for-windows/master"
+_XORRISO_WINDOWS_FILES = ("xorriso.exe", "cygwin1.dll", "cygiconv-2.dll")
+
 # Linux package names per distro family: (package_manager, packages)
 _LINUX_PKGS: dict[str, tuple[list[str], list[str]]] = {
     # distro-id → (pkg_manager_cmd, packages)
@@ -91,6 +95,28 @@ class DependencyInstaller:
     def _log(self, message: str) -> None:
         self.log.append(message)
 
+    def _tools_dir(self) -> Path:
+        return Path(__file__).resolve().parents[1] / "tools"
+
+    def _verify_xorriso_executable(self, exe: Path) -> bool:
+        """Return True when xorriso starts and responds to --version."""
+        try:
+            result = subprocess.run(
+                [str(exe), "--version"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=30,
+                check=False,
+            )
+            return result.returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+
+    def _xorriso_windows_bundle_complete(self, tools_dir: Path) -> bool:
+        return all((tools_dir / name).is_file() for name in _XORRISO_WINDOWS_FILES)
+
     def detect_linux_distro(self) -> str:
         """Return the distro ID from /etc/os-release, lower-cased."""
         os_release = Path("/etc/os-release")
@@ -145,14 +171,24 @@ class DependencyInstaller:
                 self.xorriso_cmd = name
                 return DependencyStatus(name="xorriso", installed=True, path=Path(path))
         if is_windows():
-            bundled = Path(__file__).resolve().parents[1] / "tools" / "xorriso.exe"
-            if bundled.exists():
+            bundled = self._tools_dir() / "xorriso.exe"
+            if bundled.is_file() and self._verify_xorriso_executable(bundled):
                 self.xorriso_cmd = str(bundled)
                 return DependencyStatus(
                     name="xorriso",
                     installed=True,
                     path=bundled,
                     message="Using bundled xorriso.exe",
+                )
+            if bundled.is_file():
+                return DependencyStatus(
+                    name="xorriso",
+                    installed=False,
+                    path=bundled,
+                    message=(
+                        "Bundled xorriso.exe is incomplete or missing Cygwin DLLs. "
+                        "It will be re-downloaded automatically."
+                    ),
                 )
         return DependencyStatus(
             name="xorriso",
@@ -385,7 +421,7 @@ class DependencyInstaller:
         *,
         progress_callback: object = None,
     ) -> bool:
-        """Download portable xorriso.exe into tools/ (Windows only)."""
+        """Download portable xorriso (exe + Cygwin DLLs) into tools/ (Windows only)."""
         def _progress(msg: str) -> None:
             self._log(msg)
             if callable(progress_callback):
@@ -394,31 +430,43 @@ class DependencyInstaller:
         if not is_windows():
             return False
 
-        tools_dir = Path(__file__).resolve().parents[1] / "tools"
+        tools_dir = self._tools_dir()
         tools_dir.mkdir(parents=True, exist_ok=True)
         dest_exe = tools_dir / "xorriso.exe"
 
-        if dest_exe.exists():
+        if self._xorriso_windows_bundle_complete(tools_dir) and self._verify_xorriso_executable(dest_exe):
             self.xorriso_cmd = str(dest_exe)
             return True
 
-        url = "https://raw.githubusercontent.com/PeyTy/xorriso-exe-for-windows/master/xorriso.exe"
-        _progress("Downloading portable xorriso.exe for Windows…")
+        total = len(_XORRISO_WINDOWS_FILES)
+        _progress("Downloading portable xorriso for Windows (exe + runtime DLLs)…")
 
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "WinISO-Toolkit/1.0"})
-            with urllib.request.urlopen(req, timeout=60) as response:
-                data = response.read()
+            for index, filename in enumerate(_XORRISO_WINDOWS_FILES, start=1):
+                url = f"{_XORRISO_WINDOWS_BASE}/{filename}"
+                _progress(f"Downloading {filename} ({index}/{total})…")
+                req = urllib.request.Request(url, headers={"User-Agent": "WinISO-Toolkit/1.0"})
+                with urllib.request.urlopen(req, timeout=120) as response:
+                    data = response.read()
+                with open(tools_dir / filename, "wb") as dst:
+                    dst.write(data)
 
-            with open(dest_exe, "wb") as dst:
-                dst.write(data)
+            if not self._verify_xorriso_executable(dest_exe):
+                _progress(
+                    "xorriso verification failed after download. "
+                    "Install Windows ADK (oscdimg.exe) or a full xorriso build manually."
+                )
+                for filename in _XORRISO_WINDOWS_FILES:
+                    (tools_dir / filename).unlink(missing_ok=True)
+                return False
 
             self.xorriso_cmd = str(dest_exe)
-            _progress("xorriso.exe installed successfully.")
+            _progress("Portable xorriso installed successfully.")
             return True
         except Exception as exc:
-            _progress(f"xorriso.exe download failed: {exc}")
-            dest_exe.unlink(missing_ok=True)
+            _progress(f"xorriso download failed: {exc}")
+            for filename in _XORRISO_WINDOWS_FILES:
+                (tools_dir / filename).unlink(missing_ok=True)
             return False
 
     def install_missing(

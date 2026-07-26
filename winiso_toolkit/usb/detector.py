@@ -18,6 +18,7 @@ class USBDevice:
     filesystem: str
     removable: bool = True
     model: str = ""
+    mount_point: str = ""
 
     @property
     def size_gb(self) -> float:
@@ -62,11 +63,14 @@ class USBDetector:
                 size = parse_size(str(dev.get("size", "0")))
             fs = ""
             label = dev.get("label") or ""
+            mount = ""
             for child in dev.get("children") or []:
                 if child.get("fstype"):
                     fs = child["fstype"]
                     if child.get("label"):
                         label = child["label"]
+                if child.get("mountpoint"):
+                    mount = child["mountpoint"]
             devices.append(
                 USBDevice(
                     path=f"/dev/{dev['name']}",
@@ -74,6 +78,7 @@ class USBDetector:
                     size_bytes=size,
                     filesystem=fs,
                     model=dev.get("model") or "",
+                    mount_point=mount,
                 )
             )
         return devices
@@ -92,6 +97,7 @@ Get-Disk | Where-Object { $_.BusType -eq 'USB' -and $_.Size -gt 0 } | ForEach-Ob
         Model = $_.FriendlyName
         FileSystem = if ($vol) { $vol.FileSystemType } else { '' }
         Label = if ($vol) { $vol.FileSystemLabel } else { $_.FriendlyName }
+        DriveLetter = if ($part) { $part.DriveLetter } else { $null }
     }
 } | ConvertTo-Json -Compress
 """
@@ -118,6 +124,8 @@ Get-Disk | Where-Object { $_.BusType -eq 'USB' -and $_.Size -gt 0 } | ForEach-Ob
 
         devices: list[USBDevice] = []
         for item in items:
+            drive_letter = item.get("DriveLetter")
+            mount_point = f"{drive_letter}:\\" if drive_letter else ""
             devices.append(
                 USBDevice(
                     path=item.get("Path", ""),
@@ -125,6 +133,7 @@ Get-Disk | Where-Object { $_.BusType -eq 'USB' -and $_.Size -gt 0 } | ForEach-Ob
                     size_bytes=int(item.get("Size") or 0),
                     filesystem=item.get("FileSystem") or "",
                     model=item.get("Model") or "",
+                    mount_point=mount_point,
                 )
             )
         return devices

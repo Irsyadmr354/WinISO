@@ -1120,7 +1120,7 @@ class StepUsbSelect(QWidget):
             return
         try:
             from winiso_toolkit.usb.health import USBHealthChecker
-            r = USBHealthChecker().run_quick_health_check(Path(dev.path))
+            r = USBHealthChecker().run_quick_health_check(dev.path, mount_point=dev.mount_point)
             QMessageBox.information(
                 self, "Health Report",
                 f"Drive: {dev.name} [{dev.path}]\n"

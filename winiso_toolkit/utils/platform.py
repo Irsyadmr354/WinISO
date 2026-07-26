@@ -20,6 +20,22 @@ def which(name: str) -> Path | None:
     return Path(found) if found else None
 
 
+_WIN_STATUS_DLL_NOT_FOUND = 0xC0000135
+
+
+def describe_process_failure(returncode: int, stderr: str = "", stdout: str = "") -> str:
+    """Turn a subprocess exit code into a readable error message."""
+    if returncode == _WIN_STATUS_DLL_NOT_FOUND or returncode == -1073741515:
+        return (
+            "required DLL not found (Windows 0xC0000135). "
+            "Re-run dependency install or install Windows ADK (oscdimg.exe)."
+        )
+    detail = (stderr or stdout).strip()
+    if detail:
+        return detail
+    return f"process exited with code {returncode}"
+
+
 def run_command(
     args: list[str],
     *,

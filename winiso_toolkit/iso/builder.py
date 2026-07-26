@@ -14,7 +14,7 @@ from winiso_toolkit.deps.installer import DependencyInstaller
 from winiso_toolkit.iso.drivers import DriverInjector
 from winiso_toolkit.iso.extract import extract_iso
 from winiso_toolkit.iso.unattended import BypassOptions, UnattendedGenerator
-from winiso_toolkit.utils.platform import is_windows, run_command
+from winiso_toolkit.utils.platform import describe_process_failure, is_windows, run_command
 from winiso_toolkit.utils.progress import ProgressCallback, clamp_progress
 
 
@@ -133,8 +133,12 @@ class ISOBuilder:
             xorriso = self.deps.check_xorriso()
             if not xorriso.installed:
                 if progress:
-                    progress(42, "Downloading portable xorriso.exe for Windows ISO build…")
-                self.deps.install_xorriso_direct()
+                    progress(42, "Downloading portable xorriso for Windows ISO build…")
+                if not self.deps.install_xorriso_direct():
+                    raise RuntimeError(
+                        "Could not install portable xorriso for Windows.\n"
+                        "Install Windows ADK Deployment Tools (oscdimg.exe) or xorriso manually."
+                    )
         self._build_xorriso(source_dir, output_iso, volume_label, progress=progress)
 
     def _replace_install_image(self, root: Path, new_image: Path) -> None:
@@ -246,7 +250,8 @@ class ISOBuilder:
                 "Check that boot/etfsboot.com and efi/microsoft/boot/efisys.bin exist."
             )
         if proc.returncode != 0:
-            raise RuntimeError(f"xorriso failed (exit {proc.returncode}): {stderr or stdout}")
+            detail = describe_process_failure(proc.returncode, stderr, stdout)
+            raise RuntimeError(f"xorriso failed (exit {proc.returncode}): {detail}")
 
         if progress:
             progress(85, "xorriso build finished.")
