@@ -1,251 +1,228 @@
-# WinISO Toolkit Supercharged
+# WinISO Toolkit Supercharged 🚀
 
-> **Cross-platform Windows ISO compressor, debloater, customizer & bootable USB creator.**
-> Runs on **Windows** and **Linux** (macOS best-effort). Built with Python 3.11+ and PyQt6.
-
----
-
-## Features
-
-| Category | Feature |
-|---|---|
-| **ISO Analysis** | UDF + Joliet + ISO9660 filesystem detection (Windows 11 UDF-only ISOs fully supported) |
-| **Compression** | LZMS ESD compression via wimlib — typically 40–50% size reduction |
-| **Edition Control** | Select individual Windows editions to keep; remove unwanted SKUs |
-| **Win 11 Bypass** | `autounattend.xml` injection — bypasses TPM 2.0, SecureBoot, RAM, CPU, MSA requirements |
-| **Debloat** | Offline DISM removal of AppX bloatware, telemetry & Cortana from install image |
-| **Drivers** | Slipstream `.inf` storage / network / Wi-Fi drivers into Setup media |
-| **Updates** | Slipstream `.msu` / `.cab` cumulative updates offline before installation |
-| **USB Creation** | Full format + file copy with speed/ETA meter and post-write SHA-256 verification |
-| **Dual Partition** | FAT32 EFI boot + NTFS data layout — handles `install.wim` files > 4 GB |
-| **Windows To Go** | Deploy live portable Windows OS onto USB via WIM apply |
-| **WinPE Rescue** | Inject 7-Zip, DiskGenius, HWMonitor and recovery tools into boot media |
-| **ISO Download** | Resolve and download official Windows 10/11 ISOs from Microsoft CDN |
-| **SHA-256 Verify** | Compare downloaded ISO against official Microsoft hash database |
-| **USB Health** | Write-speed benchmark + write-then-read-back fake-capacity detection |
-| **QEMU Testing** | 1-click boot test of built ISO in QEMU VM sandbox |
-| **GUI Wizard** | 8-step PyQt6 wizard with Deep Space dark theme, live console, animated progress |
-| **CLI** | Full command-line interface for scripting and automation |
+**Cross-platform Windows ISO Compressor, Debloater, Customizer & Bootable USB Creator**
+— runs on **Linux** and **Windows** (macOS/BSD best-effort).
 
 ---
 
-## Requirements
+## ✨ Features
 
-**Python 3.11+** and the following external tools:
-
-| Tool | Platform | Purpose | Auto-install |
-|---|---|---|---|
-| **wimlib** (`wimlib-imagex`) | Windows + Linux | WIM/ESD read, compress, export | ✅ |
-| **xorriso** | Linux (Windows optional) | Build bootable ISO | ✅ Linux |
-| **oscdimg** (Windows ADK) | Windows | Build bootable ISO | Manual |
-| **parted** | Linux | USB partitioning | ✅ Linux |
-| **ntfs-3g** | Linux | NTFS USB formatting | ✅ Linux |
-
-Run `winiso-toolkit --install-deps` or click **Install wimlib now** in the GUI to auto-install.
-
-**Windows fallback:** If wimlib isn't installed, the app tries Windows built-in `DISM /Get-WimInfo` to enumerate editions, then falls back to a "keep all editions" mode so you can still proceed.
+| Feature | CLI | GUI |
+|---|---|---|
+| LZMS ESD compression (removes unused editions) | ✅ | ✅ |
+| Windows 11 TPM / SecureBoot / RAM / CPU bypass | ✅ | ✅ |
+| Microsoft Account bypass (BypassNRO) | ✅ | ✅ |
+| Telemetry & bloatware removal | ✅ | ✅ |
+| Cumulative update slipstreaming (.msu/.cab) | ✅ | ✅ |
+| Driver slipstreaming (.inf) | ✅ | ✅ |
+| Bootable USB creation (UEFI + Legacy) | ✅ | ✅ |
+| Dual-partition layout (FAT32 EFI + NTFS Data) | ✅ | ✅ |
+| Windows To Go live USB deployer | ✅ | — |
+| WinPE rescue media builder | ✅ | — |
+| Official MS ISO downloader | ✅ | — |
+| SHA-256 checksum verifier (official MS hashes) | ✅ | ✅ |
+| USB health & fake-capacity detector | ✅ | ✅ |
+| QEMU VM boot tester | ✅ | ✅ |
+| Auto dependency installer | ✅ | ✅ |
 
 ---
 
-## Installation
+## 📦 Requirements
+
+- **Python 3.11+**
+- **pycdlib** — ISO reading (installed automatically via pip)
+- **PyQt6** — GUI (installed automatically via pip)
+
+### External Tools (auto-installable via `--install-deps`)
+
+| Tool | Linux | Windows |
+|---|---|---|
+| **wimlib** (`wimlib-imagex`) | `apt/pacman/dnf/zypper/apk` | winget or auto-download from wimlib.net |
+| **xorriso** | `apt/pacman/dnf/zypper` | optional (fallback for oscdimg) |
+| **oscdimg** (Windows ADK) | not needed | optional (preferred over xorriso) |
+| **parted**, **ntfs-3g** | `apt/pacman/dnf` | not needed (diskpart used) |
+
+---
+
+## 📥 Installation
 
 ```bash
-# From source
-git clone https://github.com/youruser/WinISO.git
-cd WinISO
 pip install -e .
+```
 
-# Or just install deps
+Or with requirements:
+
+```bash
 pip install -r requirements.txt
 ```
 
-### Linux — install external tools
+### Install external tools automatically
 
 ```bash
-# Debian / Ubuntu / Mint / Kali
-sudo apt install wimtools xorriso ntfs-3g parted usbutils
+# Linux — detects distro and runs apt/pacman/dnf/zypper/apk
+winiso-toolkit --install-deps
 
-# Arch / Manjaro / EndeavourOS
-sudo pacman -S wimlib xorriso ntfs-3g parted usbutils
-
-# Fedora / RHEL / Rocky / AlmaLinux
-sudo dnf install wimlib-utils xorriso ntfs-3g parted usbutils
-
-# openSUSE
-sudo zypper install wimlib xorriso ntfs-3g parted
-
-# Alpine
-sudo apk add wimlib xorriso ntfs-3g parted
-
-# Or let the toolkit do it:
-winiso-toolkit --install-deps --confirm
+# Windows — tries winget first, then direct download from wimlib.net
+winiso-toolkit --install-deps
 ```
 
-### Windows — install wimlib
-
-The GUI has a built-in **Install wimlib now** button that:
-1. Tries `winget install Wimlib.Wimlib` first
-2. Falls back to direct download from [wimlib.net](https://wimlib.net/downloads/) (no admin required)
+Supported Linux distros: Debian, Ubuntu, Mint, Pop!_OS, Kali, Raspbian, Arch, Manjaro, EndeavourOS, Garuda, Fedora, RHEL, CentOS, Rocky, AlmaLinux, openSUSE Leap/Tumbleweed, SLES, Alpine, Void, Gentoo.
 
 ---
 
-## Usage
+## 🚀 Usage
 
-### GUI Wizard
+### GUI (PyQt6 dark wizard)
 
 ```bash
 winiso-toolkit --gui
 ```
 
-8-step wizard: **ISO → Editions → Customize → Compress → USB → Confirm → Build → Done**
+8-step wizard: ISO → Editions → Customize → Compress → USB → Confirm → Burn → Done.
 
 ---
 
-### CLI
+### CLI — compress ISO, apply bypasses, burn to USB
 
-#### Analyze an ISO
+```bash
+winiso-toolkit \
+  --iso win11.iso \
+  --bypass-tpm --bypass-msa --debloat \
+  --output win11_lean.iso \
+  --target /dev/sdb \
+  --confirm
+```
+
+### List editions inside an ISO
+
 ```bash
 winiso-toolkit --iso win11.iso --analyze-only
 ```
 
-#### Compress + bypass Win 11 requirements
+### Keep only specific editions
+
 ```bash
-winiso-toolkit --iso win11.iso --bypass-tpm --bypass-msa --output win11_slim.iso
+winiso-toolkit --iso win11.iso --edition "Home" --edition "Pro" --output win11_homeandpro.iso
 ```
 
-#### Keep only specific editions
-```bash
-winiso-toolkit --iso win11.iso --edition "Home" --edition "Pro" --output win11_homepro.iso
-```
+### Slipstream updates + inject drivers
 
-#### Compress + slipstream drivers + burn to USB
 ```bash
 winiso-toolkit --iso win11.iso \
+  --slipstream-updates ./updates \
   --inject-drivers ./drivers \
-  --target /dev/sdb \
-  --boot-mode both \
-  --confirm
+  --output win11_updated.iso
 ```
 
-#### Download official Windows 11 ISO
+### Download official Microsoft ISO
+
 ```bash
 winiso-toolkit --download-iso win11
+winiso-toolkit --download-iso win10
 ```
 
-#### USB health check
+### Windows To Go live USB
+
+```bash
+winiso-toolkit --iso win11.iso --target /dev/sdb --wtg --confirm
+```
+
+### Build WinPE rescue media
+
+```bash
+winiso-toolkit --iso win11.iso --build-pe-rescue --output rescue.iso
+```
+
+### USB health check
+
 ```bash
 winiso-toolkit --target /dev/sdb --health-check
 ```
 
-#### Auto-install missing dependencies
+### Test ISO in QEMU
+
+```bash
+winiso-toolkit --iso win11_lean.iso --test-vm
+```
+
+### Install missing dependencies
+
 ```bash
 winiso-toolkit --install-deps --confirm
 ```
 
-#### Test built ISO in QEMU
-```bash
-winiso-toolkit --iso win11_compressed.iso --test-vm
-```
-
-#### Full beast-mode pipeline
-```bash
-winiso-toolkit --iso win11.iso \
-  --bypass-tpm --bypass-msa \
-  --debloat \
-  --slipstream-updates ./updates \
-  --inject-drivers ./drivers \
-  --inject-winpe-tools \
-  --output win11_beast.iso \
-  --target /dev/sdb \
-  --boot-mode both \
-  --use-dual-partition \
-  --confirm
-```
-
 ---
 
-## Cross-Platform Notes
-
-| Feature | Windows | Linux | macOS |
-|---|---|---|---|
-| ISO analysis (UDF/Joliet/ISO9660) | ✅ | ✅ | ✅ |
-| WIM metadata (wimlib) | ✅ | ✅ | ✅ |
-| WIM metadata fallback (DISM) | ✅ | — | — |
-| ISO rebuild (oscdimg) | ✅ | — | — |
-| ISO rebuild (xorriso) | ✅ optional | ✅ | ✅ |
-| USB partitioning (parted) | — | ✅ | — |
-| USB partitioning (diskpart) | ✅ | — | — |
-| USB detection | ✅ | ✅ | — |
-| Auto-install deps | ✅ winget+direct | ✅ apt/dnf/pacman/zypper/apk | manual |
-| GUI wizard | ✅ | ✅ | ✅ |
-
----
-
-## Running Tests
-
-```bash
-python run_tests.py
-# 11 tests — all pass
-```
-
----
-
-## Build Standalone Executable
-
-```bash
-python build.py
-# Output: dist/WinISO-Toolkit.exe  (Windows)
-# Output: dist/WinISO-Toolkit      (Linux)
-```
-
----
-
-## Project Structure
+## 📂 Project Structure
 
 ```
 winiso_toolkit/
-├── cli.py                # CLI argument parser & command dispatcher
-├── pipeline.py           # End-to-end compress + rebuild pipeline
+├── cli.py              CLI parser & command dispatcher
+├── pipeline.py         End-to-end compress → inject → rebuild pipeline
 ├── deps/
-│   └── installer.py      # Cross-platform dependency checker + auto-installer
-│                         # (winget / direct download / apt / dnf / pacman / zypper / apk)
+│   └── installer.py    Multi-platform dependency installer (21 distros)
 ├── iso/
-│   ├── analyzer.py       # ISO probe: UDF/Joliet/ISO9660, wimlib + DISM fallback
-│   ├── builder.py        # Bootable ISO builder: xorriso (all platforms) + oscdimg (Windows)
-│   ├── compressor.py     # LZMS wimexport compressor
-│   ├── debloat.py        # Offline DISM AppX bloatware removal
-│   ├── drivers.py        # .inf driver slipstream injector
-│   ├── extract.py        # pycdlib ISO extractor (no mount, UDF-aware)
-│   ├── pebuilder.py      # WinPE rescue suite builder
-│   ├── scraper.py        # Microsoft CDN ISO resolver + downloader (retry + resume)
-│   ├── unattended.py     # autounattend.xml bypass generator
-│   ├── updates.py        # .msu/.cab update slipstreamer
-│   ├── verifier.py       # SHA-256 calculator + official MS hash matcher
-│   └── winpe.py          # WinPE recovery tool injector
+│   ├── analyzer.py     pycdlib ISO probe, UDF/Joliet/ISO9660, wimlib + DISM
+│   ├── builder.py      xorriso / oscdimg bootable ISO builder
+│   ├── compressor.py   LZMS wimexport ESD compressor
+│   ├── debloat.py      AppX bloatware & telemetry stripper (offline DISM)
+│   ├── drivers.py      INF driver slipstream injector
+│   ├── extract.py      pycdlib ISO extractor (UDF-aware)
+│   ├── pebuilder.py    WinPE rescue media builder
+│   ├── scraper.py      Microsoft CDN ISO resolver + downloader
+│   ├── unattended.py   autounattend.xml bypass generator
+│   ├── updates.py      Windows update (.msu/.cab) slipstreamer
+│   ├── verifier.py     SHA-256 + official MS hash matcher
+│   └── winpe.py        WinPE recovery tool injector
 ├── usb/
-│   ├── creator.py        # USB format + write + speed/ETA + post-write SHA-256 verify
-│   ├── detector.py       # Removable USB detector (lsblk / Get-Disk / wmic fallback)
-│   ├── ejector.py        # Safe buffer-flush ejector
-│   ├── health.py         # Write-speed benchmark + fake-capacity detector
-│   ├── partitioner.py    # Dual FAT32+NTFS partition layout
-│   └── wtg.py            # Windows To Go live USB deployer
+│   ├── creator.py      USB format + write + verify (Linux & Windows)
+│   ├── detector.py     USB device lister (lsblk / Get-Disk / wmic)
+│   ├── ejector.py      Safe buffer-flush eject
+│   ├── health.py       Write speed benchmark + fake capacity detector
+│   ├── partitioner.py  Dual-partition FAT32+NTFS UEFI layout
+│   └── wtg.py          Windows To Go deployer
 ├── utils/
-│   ├── logger.py         # Rotating file logger (~/.winiso_toolkit/)
-│   ├── platform.py       # is_windows(), is_linux(), which(), run_command()
-│   ├── progress.py       # ProgressCallback type + clamp_progress()
-│   └── vm.py             # QEMU VM boot tester
-├── gui/
-│   ├── main_window.py    # 8-step PyQt6 wizard + live console + fade animations
-│   └── theme.py          # Deep Space dark QSS theme with neon accents
-└── tools/                # Auto-created: wimlib-imagex.exe extracted here on Windows
-tests/                    # 11 unit tests
-build.py                  # PyInstaller one-click build script
-winiso_toolkit.spec       # PyInstaller spec (no block_cipher)
-run_tests.py              # unittest runner
+│   ├── logger.py       Rotating log handler (~/.winiso_toolkit/)
+│   ├── platform.py     Cross-platform subprocess helpers
+│   ├── progress.py     Clamped ProgressCallback type
+│   └── vm.py           QEMU sandbox boot tester
+└── gui/
+    ├── main_window.py  8-step PyQt6 wizard with live terminal console
+    └── theme.py        Deep Space dark theme (glassmorphism QSS)
+tests/                  11 unit tests (python run_tests.py)
+build.py                PyInstaller standalone exe builder
 ```
 
 ---
 
-## License
+## 🧪 Tests
+
+```bash
+python run_tests.py
+```
+
+11/11 pass. Covers: ISO analyzer, WIM parser, unattended XML, driver discovery, USB capacity, SHA-256 verifier, debloat script, update scanner, scraper, PE builder.
+
+---
+
+## 📦 Build standalone executable
+
+```bash
+python build.py
+# → dist/WinISO-Toolkit.exe
+```
+
+---
+
+## 🔒 Security notes
+
+- All USB device paths validated with regex before use — no shell injection
+- Diskpart scripts written to unique temp files (`mkstemp`) — no TOCTOU race
+- Windows disk numbers validated as non-negative integers before any interpolation
+- No credentials, tokens, or PII collected or transmitted
+
+---
+
+## 📄 License
 
 MIT — see [LICENSE](LICENSE)
