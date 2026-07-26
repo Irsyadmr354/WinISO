@@ -6,7 +6,6 @@ import json
 import re
 import subprocess
 from dataclasses import dataclass
-from pathlib import Path
 
 from winiso_toolkit.utils.platform import is_linux, is_windows
 
@@ -55,7 +54,7 @@ class USBDetector:
         for dev in data.get("blockdevices", []):
             if dev.get("type") != "disk":
                 continue
-            if dev.get("rm") != 1:
+            if str(dev.get("rm", "")).lower() not in ("1", "true"):
                 continue
             try:
                 size = int(dev.get("size", 0))
@@ -123,7 +122,7 @@ Get-Disk | Where-Object { $_.BusType -eq 'USB' -and $_.Size -gt 0 } | ForEach-Ob
                 USBDevice(
                     path=item.get("Path", ""),
                     name=item.get("Label") or item.get("Model") or f"Disk {item.get('Number')}",
-                    size_bytes=int(item.get("Size", 0)),
+                    size_bytes=int(item.get("Size") or 0),
                     filesystem=item.get("FileSystem") or "",
                     model=item.get("Model") or "",
                 )

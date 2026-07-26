@@ -1,2 +1,3 @@
+# Runtime dependencies — keep in sync with pyproject.toml [project.dependencies]
 pycdlib>=1.14.0
 PyQt6>=6.6.0

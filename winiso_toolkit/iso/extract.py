@@ -17,23 +17,30 @@ def extract_iso(iso_path: Path, dest: Path) -> None:
     iso.open(str(iso_path))
 
     try:
-        walk_path = "/"
-        if iso.has_joliet():
-            for current, _dirs, files in iso.walk(joliet_path="/"):
-                rel = _iso_rel_path(current)
-                out_dir = dest / rel
-                out_dir.mkdir(parents=True, exist_ok=True)
-                for name in files:
-                    _extract_file(iso, f"{current}/{name}".replace("//", "/"), dest, joliet=True)
-        else:
-            for current, _dirs, files in iso.walk(iso_path="/"):
-                rel = _iso_rel_path(current)
-                out_dir = dest / rel
-                out_dir.mkdir(parents=True, exist_ok=True)
-                for name in files:
-                    _extract_file(iso, f"{current}/{name}".replace("//", "/"), dest, joliet=False)
+        path_kw = _resolve_path_type(iso)
+        walk_kwargs = {path_kw: "/"}
+        for current, _dirs, files in iso.walk(**walk_kwargs):
+            rel = _iso_rel_path(current)
+            out_dir = dest / rel
+            out_dir.mkdir(parents=True, exist_ok=True)
+            for name in files:
+                _extract_file(
+                    iso,
+                    f"{current}/{name}".replace("//", "/"),
+                    dest,
+                    path_kw=path_kw,
+                )
     finally:
         iso.close()
+
+
+def _resolve_path_type(iso: pycdlib.PyCdlib) -> str:
+    """Pick the best filesystem path type for walking/extracting this ISO."""
+    if iso.has_udf():
+        return "udf_path"
+    if iso.has_joliet():
+        return "joliet_path"
+    return "iso_path"
 
 
 def _iso_rel_path(iso_path: str) -> Path:
@@ -55,12 +62,9 @@ def _extract_file(
     iso_path: str,
     dest_root: Path,
     *,
-    joliet: bool,
+    path_kw: str,
 ) -> None:
     rel = _iso_rel_path(iso_path)
     out = dest_root / rel
     out.parent.mkdir(parents=True, exist_ok=True)
-    if joliet:
-        iso.get_file_from_iso(local_path=str(out), joliet_path=iso_path)
-    else:
-        iso.get_file_from_iso(local_path=str(out), iso_path=iso_path)
+    iso.get_file_from_iso(local_path=str(out), **{path_kw: iso_path})

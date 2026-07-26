@@ -6,8 +6,6 @@ import logging
 import shutil
 from pathlib import Path
 
-from winiso_toolkit.utils.platform import run_command, which
-
 logger = logging.getLogger(__name__)
 
 
@@ -30,7 +28,7 @@ class UpdateSlipstreamer:
         if not pkgs:
             return 0
 
-        target_dir = iso_extracted_root / "$WinPEDriver$" / "Updates"
+        target_dir = iso_extracted_root / "sources" / "$OEM$" / "$1" / "Updates"
         target_dir.mkdir(parents=True, exist_ok=True)
 
         for pkg in pkgs:

@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import logging
-import subprocess
 from pathlib import Path
-
-from winiso_toolkit.utils.platform import is_windows, run_command, which
-from winiso_toolkit.utils.progress import ProgressCallback, clamp_progress
+from winiso_toolkit.utils.platform import run_command, which
+from winiso_toolkit.utils.progress import ProgressCallback
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +21,7 @@ class WindowsToGoDeployer:
         progress: ProgressCallback | None = None,
     ) -> bool:
         """Apply WIM image directly to USB drive and configure BCD boot sector."""
+        target_drive_letter = target_drive_letter.rstrip(":\\")
         wim_path = Path(wim_path)
         dism = which("dism") or which("dism.exe")
         if not dism:
@@ -47,13 +46,16 @@ class WindowsToGoDeployer:
 
         # Configure BCD boot sector for portable USB boot
         bcdboot = which("bcdboot") or which("bcdboot.exe")
-        if bcdboot:
-            bcd_cmd = [
-                str(bcdboot), f"{target_drive_letter}:\\Windows",
-                "/s", f"{target_drive_letter}:",
-                "/f", "ALL",
-            ]
-            run_command(bcd_cmd, check=False)
+        if not bcdboot:
+            raise RuntimeError("bcdboot is required for Windows To Go bootloader configuration.")
+        bcd_cmd = [
+            str(bcdboot), f"{target_drive_letter}:\\Windows",
+            "/s", f"{target_drive_letter}:",
+            "/f", "ALL",
+        ]
+        res_bcd = run_command(bcd_cmd, check=False)
+        if res_bcd.returncode != 0:
+            raise RuntimeError(f"bcdboot failed: {res_bcd.stderr or res_bcd.stdout}")
 
         if progress:
             progress(100, "Windows To Go deployment complete.")

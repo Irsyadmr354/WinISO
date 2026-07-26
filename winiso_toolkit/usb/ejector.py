@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import os
 import subprocess
-from pathlib import Path
 
 from winiso_toolkit.utils.platform import is_linux, is_windows, run_command
 
@@ -33,12 +31,22 @@ class USBEjector:
         return False, f"Could not eject drive: {res.stderr or res.stdout}"
 
     def _eject_windows(self, device_path: str) -> tuple[bool, str]:
-        # Match PHYSICALDRIVE number
-        match = device_path.upper().replace("\\\\.\\", "")
-        if match.startswith("PHYSICALDRIVE"):
-            disk_num = match.replace("PHYSICALDRIVE", "")
-            ps = f"Get-Disk -Number {disk_num} | Set-Disk -IsOffline $true; Get-Disk -Number {disk_num} | Set-Disk -IsOffline $false"
+        # Parse PHYSICALDRIVE number from path (e.g. \\.\PHYSICALDRIVE1)
+        normalized = device_path.upper().replace("\\\\.\\", "")
+        if normalized.startswith("PHYSICALDRIVE"):
+            suffix = normalized.replace("PHYSICALDRIVE", "")
+            if not suffix.isdigit():
+                return False, f"Invalid device path: {device_path}"
+            disk_num = int(suffix)
+            if disk_num < 0:
+                return False, f"Invalid disk number in device path: {device_path}"
+            # Pass disk_num as a validated integer — no string interpolation of
+            # untrusted input; the value came from a digit-only suffix above.
+            ps = (
+                f"Get-Disk -Number {disk_num} | Set-Disk -IsOffline $true; "
+                f"Get-Disk -Number {disk_num} | Set-Disk -IsOffline $false"
+            )
             res = run_command(["powershell", "-NoProfile", "-Command", ps], check=False)
             if res.returncode == 0:
                 return True, "Safe to remove USB drive (buffers flushed)."
-        return True, "Write buffers flushed."
+        return False, "Failed to offline/eject drive."

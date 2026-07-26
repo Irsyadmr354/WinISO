@@ -6,6 +6,8 @@ import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
+from winiso_toolkit.utils.progress import ProgressCallback
+
 
 @dataclass
 class HashVerificationResult:
@@ -28,7 +30,7 @@ KNOWN_OFFICIAL_HASHES = {
 class ISOVerifier:
     """Verify ISO file integrity against SHA-256 checksums."""
 
-    def calculate_sha256(self, iso_path: Path, progress_callback=None) -> str:
+    def calculate_sha256(self, iso_path: Path, progress_callback: ProgressCallback | None = None) -> str:
         """Calculate SHA-256 hash of an ISO file."""
         iso_path = Path(iso_path)
         if not iso_path.is_file():
@@ -48,7 +50,7 @@ class ISOVerifier:
 
         return h.hexdigest().lower()
 
-    def verify_iso(self, iso_path: Path, progress_callback=None) -> HashVerificationResult:
+    def verify_iso(self, iso_path: Path, progress_callback: ProgressCallback | None = None) -> HashVerificationResult:
         """Calculate SHA-256 and check if it matches official Microsoft releases."""
         digest = self.calculate_sha256(iso_path, progress_callback)
         match_name = KNOWN_OFFICIAL_HASHES.get(digest, "")

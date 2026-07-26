@@ -14,7 +14,7 @@ from winiso_toolkit.deps.installer import DependencyInstaller
 from winiso_toolkit.iso.drivers import DriverInjector
 from winiso_toolkit.iso.extract import extract_iso
 from winiso_toolkit.iso.unattended import BypassOptions, UnattendedGenerator
-from winiso_toolkit.utils.platform import is_linux, is_windows, run_command
+from winiso_toolkit.utils.platform import is_windows, run_command
 from winiso_toolkit.utils.progress import ProgressCallback, clamp_progress
 
 
@@ -68,12 +68,7 @@ class ISOBuilder:
             if progress:
                 progress(40, "Building bootable ISO…")
 
-            if is_linux():
-                self._build_xorriso(work_dir, output_iso, label, progress=progress)
-            elif is_windows():
-                self._build_oscdimg(work_dir, output_iso, label, progress=progress)
-            else:
-                raise RuntimeError("Unsupported platform for ISO building.")
+            self._build_iso(work_dir, output_iso, label, progress=progress)
 
             if progress:
                 progress(90, "Validating boot record…")
@@ -91,15 +86,62 @@ class ISOBuilder:
     def _extract_iso(self, iso_path: Path, dest: Path) -> None:
         extract_iso(iso_path, dest)
 
+    def build_from_dir(
+        self,
+        source_dir: Path,
+        output_iso: Path,
+        volume_label: str,
+        *,
+        progress: ProgressCallback | None = None,
+    ) -> Path:
+        """Build a bootable ISO directly from an already-extracted directory.
+
+        Unlike ``rebuild``, this does not extract a source ISO first - it
+        assumes ``source_dir`` already contains the full, ready-to-burn
+        Windows installer file tree (used when re-packing an ISO after
+        injecting extras like debloat scripts, updates, or rescue tools).
+        """
+        source_dir = Path(source_dir)
+        output_iso = Path(output_iso)
+        try:
+            self._build_iso(source_dir, output_iso, volume_label, progress=progress)
+            self._validate_boot_record(output_iso)
+            return output_iso
+        except Exception:
+            output_iso.unlink(missing_ok=True)
+            raise
+
+    def _build_iso(
+        self,
+        source_dir: Path,
+        output_iso: Path,
+        volume_label: str,
+        *,
+        progress: ProgressCallback | None = None,
+    ) -> None:
+        """Choose the best available ISO builder for the current platform.
+
+        Priority:
+        - Windows: oscdimg (ADK) if available, else xorriso
+        - Linux/other: xorriso only
+        """
+        if is_windows():
+            oscdimg = self.deps.check_oscdimg()
+            if oscdimg.installed:
+                self._build_oscdimg(source_dir, output_iso, volume_label, progress=progress)
+                return
+            # Fall through to xorriso if oscdimg is missing on Windows
+        # Linux, macOS, and Windows-without-oscdimg all use xorriso
+        self._build_xorriso(source_dir, output_iso, volume_label, progress=progress)
+
     def _replace_install_image(self, root: Path, new_image: Path) -> None:
         for sub in ("sources", "SOURCES"):
             target_dir = root / sub
             if not target_dir.is_dir():
                 continue
-            for old in ("install.wim", "install.esd", "INSTALL.WIM", "INSTALL.ESD"):
-                old_path = target_dir / old
-                if old_path.exists():
-                    old_path.unlink()
+            for f in target_dir.iterdir():
+                if f.name.lower() in ("install.wim", "install.esd"):
+                    f.unlink()
             ext = new_image.suffix.lower()
             name = "install.esd" if ext == ".esd" else "install.wim"
             shutil.copy2(new_image, target_dir / name)
@@ -108,10 +150,41 @@ class ISOBuilder:
 
     def _read_label(self, iso_path: Path) -> str:
         iso = pycdlib.PyCdlib()
-        iso.open(str(iso_path))
-        label = iso.volume_identifier().strip() if iso.volume_identifier() else ""
-        iso.close()
-        return label or "CCCOMA_X64FRE_EN-US_DV9"
+        try:
+            iso.open(str(iso_path))
+            raw_label: bytes | None = iso.pvd.volume_identifier
+            if raw_label:
+                label = raw_label.decode("ascii", errors="replace").strip()
+            else:
+                label = ""
+        finally:
+            iso.close()
+        if not label:
+            import logging
+            logging.getLogger(__name__).warning(
+                "No volume label found on source ISO; falling back to generic label 'WINISO'."
+            )
+            return "WINISO"
+        return label
+
+    def _find_case_insensitive(self, root: Path, relative: str) -> str:
+        current = root
+        actual_parts = []
+        parts = relative.replace('\\', '/').split('/')
+        for part in parts:
+            if not part:
+                continue
+            if current.is_dir():
+                for child in current.iterdir():
+                    if child.name.lower() == part.lower():
+                        actual_parts.append(child.name)
+                        current = child
+                        break
+                else:
+                    return relative
+            else:
+                return relative
+        return "/".join(actual_parts)
 
     def _build_xorriso(
         self,
@@ -123,7 +196,12 @@ class ISOBuilder:
     ) -> None:
         xorriso = self.deps.check_xorriso()
         if not xorriso.installed or not xorriso.path:
-            raise RuntimeError("xorriso is required on Linux.")
+            raise RuntimeError(
+                "xorriso is required to build bootable ISOs but was not found.\n"
+                "  Linux:   sudo apt install xorriso  (or pacman/dnf/zypper)\n"
+                "  Windows: download from https://www.gnu.org/software/xorriso/\n"
+                "  macOS:   brew install xorriso"
+            )
 
         args = [
             str(xorriso.path),
@@ -135,13 +213,13 @@ class ISOBuilder:
             "-r",
             "-V", volume_label,
             "-o", str(output_iso.resolve()),
-            "-c", "boot/boot.cat",
-            "-b", "boot/etfsboot.com",
+            "-c", self._find_case_insensitive(source_dir, "boot/boot.cat"),
+            "-b", self._find_case_insensitive(source_dir, "boot/etfsboot.com"),
             "-no-emul-boot",
             "-boot-load-size", "8",
             "-boot-info-table",
             "-eltorito-alt-boot",
-            "-e", "efi/microsoft/boot/efisys.bin",
+            "-e", self._find_case_insensitive(source_dir, "efi/microsoft/boot/efisys.bin"),
             "-no-emul-boot",
             "-isohybrid-gpt-basdat",
             ".",
@@ -208,21 +286,32 @@ class ISOBuilder:
             progress(85, "oscdimg build finished.")
 
     def _validate_boot_record(self, iso_path: Path) -> None:
-        xorriso = self.deps.check_xorriso()
-        if xorriso.installed and xorriso.path and is_linux():
-            result = run_command(
-                [str(xorriso.path), "-indev", str(iso_path), "-report_el_torito", "plain"],
-                check=False,
-            )
-            output = result.stdout + result.stderr
-            if "El Torito" not in output and "boot" not in output.lower():
-                raise RuntimeError("Built ISO has no valid El Torito boot record.")
-            return
+        """Validate that the built ISO has a valid El Torito boot record.
 
-        # Windows fallback: check file size and basic readability
+        Uses xorriso when available (any platform), falls back to pycdlib.
+        """
+        xorriso = self.deps.check_xorriso()
+        if xorriso.installed and xorriso.path:
+            try:
+                result = run_command(
+                    [str(xorriso.path), "-indev", str(iso_path), "-report_el_torito", "plain"],
+                    check=False,
+                )
+                output = result.stdout + result.stderr
+                if "El Torito" not in output and "boot" not in output.lower():
+                    raise RuntimeError("Built ISO has no valid El Torito boot record.")
+                return
+            except OSError:
+                pass  # xorriso invocation failed — fall through to pycdlib
+
+        # pycdlib fallback (no external tools needed)
         iso = pycdlib.PyCdlib()
         try:
             iso.open(str(iso_path))
-            iso.close()
+            has_eltorito = getattr(iso, "eltorito_boot_catalog", None) is not None
         except Exception as exc:
             raise RuntimeError(f"Built ISO failed validation: {exc}") from exc
+        finally:
+            iso.close()
+        if not has_eltorito:
+            raise RuntimeError("Built ISO has no valid El Torito boot record.")

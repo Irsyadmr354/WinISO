@@ -42,5 +42,9 @@ class TestBeastMode(unittest.TestCase):
             tmp_path = Path(tmp)
             ok = builder.build_rescue_media(tmp_path)
             self.assertTrue(ok)
-            readme = tmp_path / "WinISO_Rescue_Tools" / "README_RESCUE.txt"
-            self.assertTrue(readme.is_file())
+            rescue = tmp_path / "WinISO_Rescue_Tools"
+            self.assertTrue((rescue / "README_RESCUE.txt").is_file())
+            self.assertTrue((rescue / "START_RESCUE.cmd").is_file())
+            self.assertTrue((rescue / "tools_manifest.json").is_file())
+            self.assertTrue((rescue / "Tools" / "7-Zip" / "Launch_7-Zip.cmd").is_file())
+            self.assertTrue((tmp_path / "sources" / "winiso_rescue_launcher.cmd").is_file())

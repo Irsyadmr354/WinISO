@@ -14,8 +14,8 @@ class WinPEInjector:
 
     def inject_winpe_cmd_shortcut(self, iso_extracted_root: Path) -> bool:
         """Create a WinPE startup script that displays a recovery command prompt helper."""
-        winpe_system32 = iso_extracted_root / "sources"
-        if not winpe_system32.is_dir():
+        sources_dir = iso_extracted_root / "sources"
+        if not sources_dir.is_dir():
             return False
 
         # Create WinPE helper script
@@ -27,6 +27,14 @@ echo Press Shift + F10 anytime during setup to open CMD.
 echo Available diagnostic tools: diskpart, bootrec, regedit
 echo ========================================================
 """
-        script_path = iso_extracted_root / "winiso_recovery.bat"
+        script_path = sources_dir / "winiso_recovery.bat"
         script_path.write_text(cmd_script, encoding="utf-8")
+
+        # Create winpeshl.ini to auto-launch the recovery script during WinPE
+        winpeshl = sources_dir / "winpeshl.ini"
+        winpeshl.write_text(
+            "[LaunchApps]\n"
+            "%SYSTEMDRIVE%\\sources\\winiso_recovery.bat\n",
+            encoding="utf-8",
+        )
         return True

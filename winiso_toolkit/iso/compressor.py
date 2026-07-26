@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 
 from winiso_toolkit.deps.installer import DependencyInstaller
-from winiso_toolkit.utils.platform import is_windows, run_command
+from winiso_toolkit.utils.platform import run_command
 from winiso_toolkit.utils.progress import ProgressCallback, clamp_progress
 
 
@@ -22,7 +22,7 @@ class WIMCompressor:
         self.deps = deps or DependencyInstaller()
 
     def estimate_size(self, source_size: int, num_indices: int = 1) -> int:
-        return int(source_size * self.LZMS_RATIO * num_indices / max(num_indices, 1))
+        return int(source_size * self.LZMS_RATIO)
 
     def compress(
         self,
@@ -51,7 +51,7 @@ class WIMCompressor:
                     source_wim,
                     part,
                     index,
-                    progress=lambda p, m: self._multi_progress(progress, i, len(indices), p, m),
+                    progress=lambda p, m, _i=i: self._multi_progress(progress, _i, len(indices), p, m),
                 )
                 partial.append(actual)
 
@@ -109,7 +109,8 @@ class WIMCompressor:
             encoding="utf-8",
             errors="replace",
         )
-        assert proc.stdout is not None
+        if proc.stdout is None:
+            raise RuntimeError("wimexport did not provide stdout for progress tracking.")
         percent_pattern = re.compile(r"(\d+(?:\.\d+)?)\s*%")
 
         for line in proc.stdout:
@@ -121,11 +122,11 @@ class WIMCompressor:
         if code != 0:
             raise RuntimeError(f"wimexport failed (exit {code}) for index {index}")
 
-        if dest.suffix.lower() != ".esd" and dest != Path(dest.with_suffix(".esd")):
+        if dest.suffix.lower() != ".esd":
             esd = dest.with_suffix(".esd")
-            if esd != dest and not esd.exists():
+            if not esd.exists():
                 dest.rename(esd)
-                dest = esd
+            dest = esd
         return dest
 
     def _join_images(
@@ -150,7 +151,7 @@ class WIMCompressor:
 
         for i, part in enumerate(parts[1:], 1):
             # Append image index 1 from 'part' into 'current'
-            args = [*base, str(part), "1", str(current)]
+            args = [*base, str(part), "1", str(current), "--solid", "--compress=LZMS"]
             run_command(args)
             if progress:
                 pct = (i / (len(parts) - 1)) * 100 if len(parts) > 1 else 100

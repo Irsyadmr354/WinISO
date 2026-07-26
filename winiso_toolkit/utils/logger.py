@@ -6,11 +6,14 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-LOG_FILE = Path("winiso_toolkit.log")
+LOG_DIR = Path.home() / ".winiso_toolkit"
+LOG_FILE = LOG_DIR / "winiso_toolkit.log"
 
 
 def setup_logger(debug: bool = False) -> logging.Logger:
     """Configure logger with rotating file handler and console handler."""
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+
     logger = logging.getLogger("winiso_toolkit")
     logger.setLevel(logging.DEBUG if debug else logging.INFO)
 

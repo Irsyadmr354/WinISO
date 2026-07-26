@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from xml.sax.saxutils import escape
 
 
 @dataclass
@@ -54,14 +55,15 @@ class UnattendedGenerator:
                 'reg add "HKLM\\SYSTEM\\Setup\\LabConfig" /v "BypassStorageCheck" /t REG_DWORD /d 1 /f'
             )
 
+        specialize_bypasses = []
         if opts.bypass_msa:
             # BypassNRO registry entry to allow offline account setup in Win 11 OOBE
-            reg_bypasses.append(
+            specialize_bypasses.append(
                 'reg add "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\OOBE" /v "BypassNRO" /t REG_DWORD /d 1 /f'
             )
 
         if opts.disable_telemetry:
-            reg_bypasses.append(
+            specialize_bypasses.append(
                 'reg add "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\DataCollection" /v "AllowTelemetry" /t REG_DWORD /d 0 /f'
             )
 
@@ -70,8 +72,17 @@ class UnattendedGenerator:
             run_synchronous_cmds += f"""
                 <RunSynchronousCommand wcm:action="add">
                     <Order>{idx}</Order>
-                    <Path>cmd.exe /c {cmd}</Path>
+                    <Path>cmd.exe /c {escape(cmd, {'"': '&quot;'})}</Path>
                     <Description>Bypass Setup Requirement {idx}</Description>
+                </RunSynchronousCommand>"""
+
+        specialize_cmds = ""
+        for idx, cmd in enumerate(specialize_bypasses, start=1):
+            specialize_cmds += f"""
+                <RunSynchronousCommand wcm:action="add">
+                    <Order>{idx}</Order>
+                    <Path>cmd.exe /c {escape(cmd, {'"': '&quot;'})}</Path>
+                    <Description>Specialize Setup Command {idx}</Description>
                 </RunSynchronousCommand>"""
 
         xml = f"""<?xml version="1.0" encoding="utf-8"?>
@@ -97,6 +108,10 @@ class UnattendedGenerator:
   <settings pass="specialize">
     <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
       <ComputerName>{opts.computer_name}</ComputerName>
+    </component>
+    <component name="Microsoft-Windows-Deployment" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+      <RunSynchronous>{specialize_cmds}
+      </RunSynchronous>
     </component>
   </settings>
   <settings pass="oobeSystem">

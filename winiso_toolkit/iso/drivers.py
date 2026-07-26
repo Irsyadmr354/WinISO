@@ -9,7 +9,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from winiso_toolkit.utils.platform import is_windows, run_command, which
+from winiso_toolkit.utils.platform import run_command, which
 
 
 class DriverInjector:
@@ -51,7 +51,10 @@ class DriverInjector:
                 "/Add-Driver", f"/Driver:{driver_dir}",
                 "/Recurse",
             ]
-            run_command(add_cmd, check=False)
+            res_add = run_command(add_cmd, check=False)
+            if res_add.returncode != 0:
+                import logging
+                logging.getLogger(__name__).warning("Failed to add some drivers")
 
             # Unmount & commit
             unmount_cmd = [
@@ -59,9 +62,12 @@ class DriverInjector:
                 f"/MountDir:{mount_dir}",
                 "/Commit",
             ]
-            run_command(unmount_cmd, check=False)
+            res_unmount = run_command(unmount_cmd, check=False)
+            if res_unmount.returncode != 0:
+                raise RuntimeError(f"Failed to unmount DISM image: {res_unmount.stderr or res_unmount.stdout}")
             return True
         finally:
+            run_command([str(dism), "/Unmount-Image", f"/MountDir:{mount_dir}", "/Discard"], check=False)
             shutil.rmtree(mount_dir, ignore_errors=True)
 
     def inject_drivers(self, iso_extracted_root: Path, driver_dir: Path) -> int:
@@ -78,10 +84,12 @@ class DriverInjector:
         oem_dir = iso_extracted_root / "$WinPEDriver$"
         oem_dir.mkdir(parents=True, exist_ok=True)
 
+        copied_dirs = set()
         for inf in infs:
-            rel = inf.name
-            target = oem_dir / rel
-            if inf.is_file():
-                shutil.copy2(inf, target)
+            driver_pkg_dir = inf.parent
+            if driver_pkg_dir not in copied_dirs:
+                dest = oem_dir / driver_pkg_dir.name
+                shutil.copytree(str(driver_pkg_dir), str(dest), dirs_exist_ok=True)
+                copied_dirs.add(driver_pkg_dir)
 
         return len(infs)

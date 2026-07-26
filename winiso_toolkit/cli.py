@@ -133,15 +133,25 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{d.path}\t{d.name}\t{d.size_gb:.1f} GB\t{d.filesystem or '—'}")
         return 0
 
+    if args.health_check and not args.target:
+        print("Error: --health-check requires --target <device> to be specified.", file=sys.stderr)
+        return 1
+
     if args.download_iso:
         from winiso_toolkit.iso.scraper import MicrosoftISOScraper
         scraper = MicrosoftISOScraper()
         releases = scraper.list_available_releases()
-        target_rel = releases[0] if args.download_iso == "win11" else releases[1]
+        matches = [r for r in releases if args.download_iso in r.product_id]
+        if not matches:
+            print(f"Error: no known release for '{args.download_iso}'.", file=sys.stderr)
+            return 1
+        target_rel = matches[0]
         out = Path(f"{args.download_iso}_official.iso")
         print(f"Downloading {target_rel.name}...")
+
         def dl_progress(pct: float, msg: str) -> None:
             print(f"\r[{pct:5.1f}%] {msg}", end="", flush=True)
+
         scraper.download_iso(target_rel.url, out, progress=dl_progress)
         print(f"\nDownload complete: {out}")
         return 0
@@ -187,6 +197,10 @@ def main(argv: list[str] | None = None) -> int:
                 bypass_options=bypass_opts,
                 driver_dir=args.inject_drivers,
                 progress=cli_progress,
+                debloat=args.debloat,
+                updates_dir=args.slipstream_updates,
+                inject_winpe_tools=args.inject_winpe_tools,
+                build_pe_rescue=args.build_pe_rescue,
             )
             print(f"\nOutput ISO: {final_iso} ({final_iso.stat().st_size / (1024**3):.2f} GB)")
 
@@ -218,6 +232,22 @@ def main(argv: list[str] | None = None) -> int:
                 hc = USBHealthChecker()
                 rep = hc.run_quick_health_check(Path(args.target))
                 print(f"Diagnostic result: {rep.status_message}")
+
+            if args.wtg:
+                from winiso_toolkit.usb.wtg import WindowsToGoDeployer
+                print("\nDeploying Windows To Go...")
+
+                def wtg_progress(pct: float, msg: str) -> None:
+                    print(f"\r[{pct:5.1f}%] {msg}", end="", flush=True)
+
+                deployer = WindowsToGoDeployer()
+                # Windows To Go applies a WIM image directly; reuse the first
+                # selected edition index (or 1 if none were resolved).
+                wtg_index = indices[0] if not args.skip_compress and indices else 1
+                drive_letter = args.target.rstrip(":\\").split("PHYSICALDRIVE")[-1]
+                deployer.deploy_wtg_windows(final_iso, wtg_index, drive_letter, progress=wtg_progress)
+                print("\nWindows To Go deployment complete.")
+                return 0
 
             creator = USBCreator()
             ok, msg = creator.validate_capacity(usb.size_bytes, final_iso.stat().st_size)

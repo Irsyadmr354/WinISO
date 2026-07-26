@@ -1,6 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
-
-block_cipher = None
+# block_cipher is deprecated since PyInstaller 6.x and removed in 7.x.
+# Encryption is now configured via the Analysis(cipher=...) parameter.
+# Set cipher=None (no encryption) or replace with a key string if needed.
 
 a = Analysis(
     ['winiso_toolkit/__main__.py'],
@@ -18,13 +19,11 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     excludes=[],
-    win_no_prefer_redirects=False,
-    win_private_assemblies=False,
-    cipher=block_cipher,
+    cipher=None,
     noarchive=False,
 )
 
-pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+pyz = PYZ(a.pure, a.zipped_data, cipher=None)
 
 exe = EXE(
     pyz,

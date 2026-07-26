@@ -34,7 +34,7 @@ class USBHealthChecker:
 
         test_file = target_dir / "winiso_speedtest.tmp"
         chunk_size = 1024 * 1024  # 1MB chunks
-        data = os.urandom(chunk_size)
+        data = b"\x00" * chunk_size
         total_bytes = test_size_mb * chunk_size
 
         start_time = time.time()
@@ -55,17 +55,47 @@ class USBHealthChecker:
             if test_file.exists():
                 test_file.unlink(missing_ok=True)
 
+    def verify_capacity(self, target_dir: Path, test_size_mb: int = 5) -> bool:
+        """Write a known pattern and read it back to detect fake/corrupt flash."""
+        target_dir = Path(target_dir)
+        if not target_dir.is_dir():
+            raise FileNotFoundError(f"Directory not found: {target_dir}")
+
+        test_file = target_dir / "winiso_captest.tmp"
+        chunk_size = 1024 * 1024
+        pattern = bytes(i % 256 for i in range(chunk_size))
+
+        try:
+            with open(test_file, "wb") as f:
+                for _ in range(test_size_mb):
+                    f.write(pattern)
+                f.flush()
+                os.fsync(f.fileno())
+
+            with open(test_file, "rb") as f:
+                for _ in range(test_size_mb):
+                    block = f.read(chunk_size)
+                    if block != pattern:
+                        return False
+            return True
+        finally:
+            if test_file.exists():
+                test_file.unlink(missing_ok=True)
+
     def run_quick_health_check(self, target_dir: Path) -> USBHealthReport:
         """Perform a quick write benchmark and sanity test."""
         try:
+            capacity_ok = self.verify_capacity(target_dir, test_size_mb=5)
             speed = self.benchmark_file_speed(target_dir, test_size_mb=50)
-            if speed < 2.0:
+            if not capacity_ok:
+                msg = "Warning: Write/read verification failed — drive may be fake or failing."
+            elif speed < 2.0:
                 msg = f"Warning: Low write speed ({speed:.1f} MB/s). Burn may take a long time."
             else:
                 msg = f"Drive healthy. Write speed: {speed:.1f} MB/s"
             return USBHealthReport(
                 write_speed_mbps=speed,
-                capacity_verified=True,
+                capacity_verified=capacity_ok,
                 status_message=msg,
             )
         except Exception as exc:
