@@ -24,5 +24,9 @@ diagnostic_report.txt
 *.iso
 *.wim
 *.esd
+*.exe
+*.dll
+winiso_toolkit/tools/
 .vscode/
 .idea/
+
