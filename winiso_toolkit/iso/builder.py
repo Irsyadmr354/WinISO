@@ -130,8 +130,11 @@ class ISOBuilder:
             if oscdimg.installed:
                 self._build_oscdimg(source_dir, output_iso, volume_label, progress=progress)
                 return
-            # Fall through to xorriso if oscdimg is missing on Windows
-        # Linux, macOS, and Windows-without-oscdimg all use xorriso
+            xorriso = self.deps.check_xorriso()
+            if not xorriso.installed:
+                if progress:
+                    progress(42, "Downloading portable xorriso.exe for Windows ISO build…")
+                self.deps.install_xorriso_direct()
         self._build_xorriso(source_dir, output_iso, volume_label, progress=progress)
 
     def _replace_install_image(self, root: Path, new_image: Path) -> None:

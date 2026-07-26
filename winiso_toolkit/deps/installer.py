@@ -138,11 +138,22 @@ class DependencyInstaller:
         )
 
     def check_xorriso(self) -> DependencyStatus:
-        """Find xorriso on PATH — available on both Linux and Windows."""
-        path = which("xorriso")
-        if path:
-            self.xorriso_cmd = "xorriso"
-            return DependencyStatus(name="xorriso", installed=True, path=path)
+        """Find xorriso on PATH or in the bundled tools/ dir (Windows)."""
+        for name in ("xorriso", "xorriso.exe"):
+            path = which(name)
+            if path:
+                self.xorriso_cmd = name
+                return DependencyStatus(name="xorriso", installed=True, path=Path(path))
+        if is_windows():
+            bundled = Path(__file__).resolve().parents[1] / "tools" / "xorriso.exe"
+            if bundled.exists():
+                self.xorriso_cmd = str(bundled)
+                return DependencyStatus(
+                    name="xorriso",
+                    installed=True,
+                    path=bundled,
+                    message="Using bundled xorriso.exe",
+                )
         return DependencyStatus(
             name="xorriso",
             installed=False,
@@ -284,19 +295,17 @@ class DependencyInstaller:
             except (OSError, subprocess.TimeoutExpired) as exc:
                 _progress(f"winget failed: {exc}. Falling back to direct download…")
 
-        # --- Strategy 2: direct download from wimlib.net ---
-        return self.install_wimlib_direct(progress_callback=progress_callback)
+        # --- Strategy 2: direct download ---
+        ok_wim = self.check_wimlib().installed or self.install_wimlib_direct(progress_callback=progress_callback)
+        ok_xor = (self.check_xorriso().installed or self.check_oscdimg().installed) or self.install_xorriso_direct(progress_callback=progress_callback)
+        return self.check_wimlib().installed and (self.check_xorriso().installed or self.check_oscdimg().installed)
 
     def install_wimlib_direct(
         self,
         *,
         progress_callback: object = None,
     ) -> bool:
-        """Download wimlib-imagex.exe from wimlib.net into tools/ (Windows only).
-
-        On Linux this method does nothing — use install_linux() which invokes
-        the distro package manager instead.
-        """
+        """Download wimlib-imagex.exe from wimlib.net into tools/ (Windows only)."""
         def _progress(msg: str) -> None:
             self._log(msg)
             if callable(progress_callback):
@@ -370,6 +379,47 @@ class DependencyInstaller:
             dest_exe.unlink(missing_ok=True)
 
         return False
+
+    def install_xorriso_direct(
+        self,
+        *,
+        progress_callback: object = None,
+    ) -> bool:
+        """Download portable xorriso.exe into tools/ (Windows only)."""
+        def _progress(msg: str) -> None:
+            self._log(msg)
+            if callable(progress_callback):
+                progress_callback(msg)  # type: ignore[call-arg]
+
+        if not is_windows():
+            return False
+
+        tools_dir = Path(__file__).resolve().parents[1] / "tools"
+        tools_dir.mkdir(parents=True, exist_ok=True)
+        dest_exe = tools_dir / "xorriso.exe"
+
+        if dest_exe.exists():
+            self.xorriso_cmd = str(dest_exe)
+            return True
+
+        url = "https://raw.githubusercontent.com/PeyTy/xorriso-exe-for-windows/master/xorriso.exe"
+        _progress("Downloading portable xorriso.exe for Windows…")
+
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "WinISO-Toolkit/1.0"})
+            with urllib.request.urlopen(req, timeout=60) as response:
+                data = response.read()
+
+            with open(dest_exe, "wb") as dst:
+                dst.write(data)
+
+            self.xorriso_cmd = str(dest_exe)
+            _progress("xorriso.exe installed successfully.")
+            return True
+        except Exception as exc:
+            _progress(f"xorriso.exe download failed: {exc}")
+            dest_exe.unlink(missing_ok=True)
+            return False
 
     def install_missing(
         self,
