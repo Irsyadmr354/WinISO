@@ -1,8 +1,14 @@
-"""WinISO Toolkit — Ultimate Windows 11 Fluent Desktop Architecture GUI."""
+"""WinISO Toolkit — Premium Desktop Application GUI.
+
+Fully-new architecture inspired by Linear, Vercel Dashboard, and Raycast.
+Features: Horizontal Step Progress Bar, Layered Card System,
+Collapsible Terminal Drawer, Animated Page Transitions.
+"""
 
 from __future__ import annotations
 
 import logging
+import re
 import sys
 import time
 from pathlib import Path
@@ -10,12 +16,13 @@ from pathlib import Path
 from PyQt6.QtCore import (
     QEasingCurve,
     QPropertyAnimation,
+    QSize,
     Qt,
     QThread,
     QTimer,
     pyqtSignal,
 )
-from PyQt6.QtGui import QDragEnterEvent, QDropEvent
+from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QFont, QIcon
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -23,6 +30,7 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QFrame,
     QGraphicsOpacityEffect,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -35,6 +43,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSpacerItem,
     QStackedWidget,
     QTextEdit,
     QVBoxLayout,
@@ -48,44 +57,69 @@ from winiso_toolkit.pipeline import WinISOPipeline
 from winiso_toolkit.usb.creator import BootMode, USBCreator
 from winiso_toolkit.usb.detector import USBDevice, USBDetector
 
-# ─────────────────────────────────────────────────────────────
-# UTILITIES & HELPERS
-# ─────────────────────────────────────────────────────────────
+
+# ═══════════════════════════════════════════════════════════
+# DESIGN SYSTEM — Reusable UI Primitives
+# ═══════════════════════════════════════════════════════════
 
 def _fmt_gb(n: int) -> str:
     return f"{n / (1024 ** 3):.2f} GB"
 
 
 def _sep() -> QFrame:
+    """Thin 1px separator line."""
     f = QFrame()
-    f.setFrameShape(QFrame.Shape.HLine)
-    f.setFrameShadow(QFrame.Shadow.Sunken)
+    f.setObjectName("separator")
+    f.setFixedHeight(1)
     return f
 
 
-def _label(text: str = "", *, muted: bool = False, bold: bool = False,
-           color: str = "", size: int = 0) -> QLabel:
-    lbl = QLabel(text)
-    parts: list[str] = ["background:transparent;"]
-    if muted:
-        parts.append("color:#71717a;")
-    elif color:
+def _text(
+    content: str = "",
+    *,
+    size: int = 13,
+    weight: int = 400,
+    color: str = "",
+    mono: bool = False,
+) -> QLabel:
+    """Typography primitive with explicit font control."""
+    lbl = QLabel(content)
+    parts = ["background:transparent;"]
+    parts.append(f"font-size:{size}px;")
+    parts.append(f"font-weight:{weight};")
+    if color:
         parts.append(f"color:{color};")
-    if bold:
-        parts.append("font-weight:700;")
-    if size:
-        parts.append(f"font-size:{size}px;")
+    if mono:
+        parts.append("font-family:'Cascadia Code','JetBrains Mono','Consolas',monospace;")
     lbl.setStyleSheet(" ".join(parts))
     return lbl
 
 
-def _card() -> QFrame:
+def _card(object_name: str = "card") -> QFrame:
+    """Surface card with configurable depth."""
     f = QFrame()
-    f.setObjectName("card_frame")
+    f.setObjectName(object_name)
     return f
 
 
-def _fade_in(widget: QWidget, ms: int = 180) -> None:
+def _badge(text: str, kind: str = "neutral") -> QLabel:
+    """Pill-shaped status badge."""
+    lbl = QLabel(text)
+    lbl.setObjectName(f"badge_{kind}")
+    return lbl
+
+
+def _btn(text: str, variant: str = "primary") -> QPushButton:
+    """Button with variant styling."""
+    btn = QPushButton(text)
+    btn.setObjectName(f"btn_{variant}")
+    btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    btn.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
+    return btn
+
+
+def _fade_in(widget: QWidget, ms: int = 250) -> None:
+    """Smooth opacity fade-in animation."""
     eff = QGraphicsOpacityEffect(widget)
     widget.setGraphicsEffect(eff)
     anim = QPropertyAnimation(eff, b"opacity", widget)
@@ -96,78 +130,49 @@ def _fade_in(widget: QWidget, ms: int = 180) -> None:
     anim.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
 
 
-# ─────────────────────────────────────────────────────────────
-# DRAG & DROP ISO AREA (FIXED ALIGNMENT & SIZING)
-# ─────────────────────────────────────────────────────────────
+class _MetricCard(QFrame):
+    """Individual KPI metric card used in dashboards and stat grids."""
 
-class IsoDropArea(QFrame):
-    file_dropped = pyqtSignal(str)
-
-    def __init__(self) -> None:
+    def __init__(self, label: str, value: str = "—", detail: str = "") -> None:
         super().__init__()
-        self.setObjectName("drop_area")
-        self.setAcceptDrops(True)
-        self.setMinimumHeight(180)
-
+        self.setObjectName("metric_card")
         layout = QVBoxLayout(self)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(8)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(4)
 
-        icon_lbl = QLabel("📂")
-        icon_lbl.setStyleSheet("font-size:32px; background:transparent;")
-        icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._label = QLabel(label)
+        self._label.setObjectName("metric_label")
 
-        title_lbl = QLabel("Drag & Drop Windows ISO File Here")
-        title_lbl.setStyleSheet("font-size:15px; font-weight:800; background:transparent;")
-        title_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._value = QLabel(value)
+        self._value.setObjectName("metric_value")
+        self._value.setWordWrap(True)
 
-        sub_lbl = QLabel("Supports official Windows 10 & 11 .iso installer images")
-        sub_lbl.setStyleSheet("font-size:11.5px; background:transparent;")
-        sub_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._detail = QLabel(detail)
+        self._detail.setObjectName("metric_detail")
+        self._detail.setWordWrap(True)
+        self._detail.setVisible(bool(detail))
 
-        self.browse_btn = QPushButton("  📂 Browse File System")
-        self.browse_btn.setMinimumWidth(200)
-        self.browse_btn.setFixedHeight(36)
+        layout.addWidget(self._label)
+        layout.addWidget(self._value)
+        layout.addWidget(self._detail)
 
-        layout.addWidget(icon_lbl)
-        layout.addWidget(title_lbl)
-        layout.addWidget(sub_lbl)
-        layout.addSpacing(6)
-        layout.addWidget(self.browse_btn, 0, Qt.AlignmentFlag.AlignCenter)
-
-    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
-        if event.mimeData().hasUrls():
-            urls = event.mimeData().urls()
-            if any(url.toLocalFile().lower().endswith(".iso") for url in urls):
-                event.acceptProposedAction()
-                self.setProperty("drag_active", True)
-                self.style().unpolish(self)
-                self.style().polish(self)
-
-    def dragLeaveEvent(self, event: object) -> None:
-        self.setProperty("drag_active", False)
-        self.style().unpolish(self)
-        self.style().polish(self)
-
-    def dropEvent(self, event: QDropEvent) -> None:
-        self.setProperty("drag_active", False)
-        self.style().unpolish(self)
-        self.style().polish(self)
-        for url in event.mimeData().urls():
-            file_path = url.toLocalFile()
-            if file_path.lower().endswith(".iso"):
-                self.file_dropped.emit(file_path)
-                break
+    def set_value(self, value: str, detail: str = "") -> None:
+        self._value.setText(value)
+        if detail:
+            self._detail.setText(detail)
+            self._detail.setVisible(True)
+        else:
+            self._detail.setVisible(False)
 
 
-# ─────────────────────────────────────────────────────────────
-# LOG BRIDGE & WORKERS
-# ─────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════
+# BACKGROUND WORKERS (unchanged business logic)
+# ═══════════════════════════════════════════════════════════
 
 class _LogBridge(QThread):
     new_log = pyqtSignal(str)
-    def run(self) -> None: pass
+    def run(self) -> None:
+        pass
 
 
 class QObjectLogHandler(logging.Handler):
@@ -183,12 +188,14 @@ class QObjectLogHandler(logging.Handler):
         try:
             msg = self.format(record)
             ts = time.strftime("%H:%M:%S", time.localtime(record.created))
-            colors = {"INFO": "#3b82f6", "WARNING": "#f59e0b",
-                      "ERROR": "#ef4444", "DEBUG": "#71717a"}
+            colors = {
+                "INFO": "#3b82f6", "WARNING": "#f59e0b",
+                "ERROR": "#ef4444", "DEBUG": "#71717a",
+            }
             c = colors.get(record.levelname, "#a1a1aa")
             html = (
-                f"<span style='color:#71717a'>[{ts}]</span> "
-                f"<span style='color:{c};font-weight:700'>[{record.levelname}]</span> "
+                f"<span style='color:#52525b'>{ts}</span>&nbsp;&nbsp;"
+                f"<span style='color:{c};font-weight:600'>{record.levelname}</span>&nbsp;&nbsp;"
                 f"<span>{msg}</span>"
             )
             self._bridge.new_log.emit(html)
@@ -269,196 +276,304 @@ class SHA256VerifyWorker(QThread):
             self.failed.emit(str(exc))
 
 
-# ─────────────────────────────────────────────────────────────
-# LEFT SIDEBAR NAVIGATION WIDGET
-# ─────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════
+# HORIZONTAL STEP PROGRESS BAR
+# ═══════════════════════════════════════════════════════════
+
+class StepProgressBar(QFrame):
+    """Connected dot-and-line wizard progress indicator."""
+
+    LABELS = ["Source", "Editions", "Tweaks", "Compress", "USB", "Review", "Build", "Done"]
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setObjectName("step_progress_bar")
+        self.setFixedHeight(48)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(20, 0, 20, 0)
+        layout.setSpacing(0)
+
+        self._dots: list[QLabel] = []
+        self._lines: list[QFrame] = []
+
+        for i, label in enumerate(self.LABELS):
+            dot = QLabel(f"  {i + 1}. {label}")
+            dot.setObjectName("step_dot_pending")
+            dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._dots.append(dot)
+            layout.addWidget(dot)
+
+            if i < len(self.LABELS) - 1:
+                line = QFrame()
+                line.setObjectName("step_line_pending")
+                line.setFixedHeight(2)
+                line.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+                self._lines.append(line)
+                layout.addWidget(line)
+
+    def set_step(self, active: int) -> None:
+        for i, dot in enumerate(self._dots):
+            if i < active:
+                dot.setObjectName("step_dot_done")
+                txt = self.LABELS[i]
+                dot.setText(f"  ✓ {txt}")
+            elif i == active:
+                dot.setObjectName("step_dot_active")
+                dot.setText(f"  {i + 1}. {self.LABELS[i]}")
+            else:
+                dot.setObjectName("step_dot_pending")
+                dot.setText(f"  {i + 1}. {self.LABELS[i]}")
+            dot.style().unpolish(dot)
+            dot.style().polish(dot)
+
+        for i, line in enumerate(self._lines):
+            line.setObjectName("step_line_done" if i < active else "step_line_pending")
+            line.style().unpolish(line)
+            line.style().polish(line)
+
+
+# ═══════════════════════════════════════════════════════════
+# LEFT SIDEBAR
+# ═══════════════════════════════════════════════════════════
 
 class SidebarWidget(QFrame):
+    step_clicked = pyqtSignal(int)
+
     STEPS = [
-        "1. ISO Source",
-        "2. Select Editions",
-        "3. Custom Tweaks",
-        "4. Compress ISO",
-        "5. Target USB",
-        "6. Confirm & Review",
-        "7. Build Media",
-        "8. Completed",
+        ("ISO Source", "📄"),
+        ("Select Editions", "📋"),
+        ("Custom Tweaks", "⚙"),
+        ("Compress ISO", "📦"),
+        ("Target USB", "💾"),
+        ("Confirm & Review", "🔍"),
+        ("Build Media", "🔨"),
+        ("Completed", "✓"),
     ]
 
     def __init__(self) -> None:
         super().__init__()
-        self.setObjectName("sidebar")
+        self.setObjectName("sidebar_root")
+        self.setFixedWidth(210)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
+        layout.setSpacing(0)
 
         # Brand header
         brand = QFrame()
         brand.setObjectName("sidebar_brand")
         bl = QVBoxLayout(brand)
-        bl.setContentsMargins(18, 18, 18, 14)
-        bl.setSpacing(4)
-        t = QLabel("WINISO TOOLKIT")
-        t.setObjectName("brand_title")
-        sub = QLabel("Supercharged v2.0")
-        sub.setObjectName("brand_subtitle")
-        bl.addWidget(t)
-        bl.addWidget(sub)
+        bl.setContentsMargins(16, 16, 16, 14)
+        bl.setSpacing(3)
+        name = QLabel("WinISO Toolkit")
+        name.setObjectName("brand_app_name")
+        ver = QLabel("V2.0 SUPERCHARGED")
+        ver.setObjectName("brand_version")
+        bl.addWidget(name)
+        bl.addWidget(ver)
         layout.addWidget(brand)
 
-        layout.addSpacing(10)
-        self.labels: list[QLabel] = []
+        # Section label
+        nav_wrap = QVBoxLayout()
+        nav_wrap.setContentsMargins(10, 14, 10, 0)
+        nav_wrap.setSpacing(2)
 
-        for idx, text in enumerate(self.STEPS):
-            lbl = QLabel(text)
-            lbl.setProperty("sidebar_item", True)
-            layout.addWidget(lbl)
-            self.labels.append(lbl)
+        section = QLabel("WORKFLOW")
+        section.setObjectName("sidebar_section_label")
+        nav_wrap.addWidget(section)
+        nav_wrap.addSpacing(6)
 
+        self._nav_buttons: list[QPushButton] = []
+        for idx, (text, icon) in enumerate(self.STEPS):
+            btn = QPushButton(f"  {icon}   {text}")
+            btn.setObjectName("nav_item")
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setFixedHeight(32)
+            btn.clicked.connect(lambda checked, i=idx: self.step_clicked.emit(i))
+            self._nav_buttons.append(btn)
+            nav_wrap.addWidget(btn)
+
+        layout.addLayout(nav_wrap)
         layout.addStretch()
 
     def set_step(self, active: int) -> None:
-        for i, lbl in enumerate(self.labels):
-            lbl.setProperty("sidebar_active", i == active)
-            lbl.setProperty("sidebar_done", i < active)
-            lbl.style().unpolish(lbl)
-            lbl.style().polish(lbl)
+        for i, btn in enumerate(self._nav_buttons):
+            btn.setProperty("active", i == active)
+            btn.setProperty("done", i < active)
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+            icon = self.STEPS[i][1]
+            text = self.STEPS[i][0]
+            if i < active:
+                btn.setText(f"  ✓   {text}")
+            else:
+                btn.setText(f"  {icon}   {text}")
 
 
-# ─────────────────────────────────────────────────────────────
-# STEP 1 — ISO SELECT
-# ─────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════
+# DROPZONE
+# ═══════════════════════════════════════════════════════════
+
+class IsoDropArea(QFrame):
+    file_dropped = pyqtSignal(str)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setObjectName("dropzone")
+        self.setAcceptDrops(True)
+        self.setMinimumHeight(170)
+
+        layout = QVBoxLayout(self)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(6)
+
+        icon = QLabel("⬆")
+        icon.setObjectName("dropzone_icon")
+        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        title = QLabel("Drop your Windows ISO file here")
+        title.setObjectName("dropzone_title")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        hint = QLabel("or click below to browse  ·  Supports .iso files from Microsoft")
+        hint.setObjectName("dropzone_hint")
+        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.browse_btn = _btn("Browse files…", "secondary")
+        self.browse_btn.setMinimumWidth(160)
+        self.browse_btn.setFixedHeight(34)
+
+        layout.addWidget(icon)
+        layout.addSpacing(4)
+        layout.addWidget(title)
+        layout.addWidget(hint)
+        layout.addSpacing(8)
+        layout.addWidget(self.browse_btn, 0, Qt.AlignmentFlag.AlignCenter)
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        if event.mimeData().hasUrls():
+            if any(u.toLocalFile().lower().endswith(".iso") for u in event.mimeData().urls()):
+                event.acceptProposedAction()
+                self.setProperty("drag_over", True)
+                self.style().unpolish(self)
+                self.style().polish(self)
+
+    def dragLeaveEvent(self, event: object) -> None:
+        self.setProperty("drag_over", False)
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        self.setProperty("drag_over", False)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        for url in event.mimeData().urls():
+            fp = url.toLocalFile()
+            if fp.lower().endswith(".iso"):
+                self.file_dropped.emit(fp)
+                break
+
+
+# ═══════════════════════════════════════════════════════════
+# STEP 1 — ISO SOURCE
+# ═══════════════════════════════════════════════════════════
 
 class StepIsoSelect(QWidget):
     next_enabled = pyqtSignal(bool)
-    _SPIN = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"]
+    _SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
     def __init__(self, state: dict, log_cb) -> None:
         super().__init__()
-        self.state = state
-        self.log_cb = log_cb
+        self.state, self.log_cb = state, log_cb
         self.worker: ISOAnalyzeWorker | None = None
         self._spin_idx = 0
 
         root = QVBoxLayout(self)
-        root.setSpacing(14)
+        root.setSpacing(16)
         root.setContentsMargins(0, 0, 0, 0)
 
-        # Header
-        hdr = QLabel("Select Windows ISO File")
-        hdr.setProperty("heading", True)
-        sub = QLabel("Drag and drop your official Windows 10/11 ISO file into the box below or browse manually.")
-        sub.setProperty("subheading", True)
-        root.addWidget(hdr)
-        root.addWidget(sub)
-        root.addWidget(_sep())
-
-        # Dropzone area
+        # Dropzone
         self.drop_area = IsoDropArea()
-        self.drop_area.file_dropped.connect(self._set_iso_path)
+        self.drop_area.file_dropped.connect(self._set_path)
         self.drop_area.browse_btn.clicked.connect(self._browse)
         root.addWidget(self.drop_area)
 
-        # File path edit & Hash verification row
-        prow = QHBoxLayout()
+        # Path input row
+        path_row = QHBoxLayout()
+        path_row.setSpacing(8)
         self.path_edit = QLineEdit()
-        self.path_edit.setPlaceholderText("Path to .iso file…")
-        self.path_edit.setMinimumHeight(38)
-
-        self.verify_btn = QPushButton("  🔍 Verify Hash")
-        self.verify_btn.setProperty("secondary", True)
-        self.verify_btn.setMinimumHeight(38)
+        self.path_edit.setPlaceholderText("Paste ISO file path or drag above…")
+        self.path_edit.setFixedHeight(38)
+        self.verify_btn = _btn("Verify SHA-256", "secondary")
+        self.verify_btn.setFixedHeight(38)
         self.verify_btn.setMinimumWidth(130)
-        self.verify_btn.setToolTip("Compare SHA-256 hash against official Microsoft database")
         self.verify_btn.clicked.connect(self._verify)
-
-        prow.addWidget(self.path_edit, 1)
-        prow.addWidget(self.verify_btn)
-        root.addLayout(prow)
+        path_row.addWidget(self.path_edit, 1)
+        path_row.addWidget(self.verify_btn)
+        root.addLayout(path_row)
 
         self.verify_bar = QProgressBar()
         self.verify_bar.setVisible(False)
-        self.verify_bar.setMaximumHeight(6)
         root.addWidget(self.verify_bar)
 
-        # Metadata card
-        self.card = _card()
-        cv = QVBoxLayout(self.card)
-        cv.setSpacing(10)
+        # Status badge row
+        status_row = QHBoxLayout()
+        self.status_badge = _badge("NO FILE SELECTED", "neutral")
+        self.spinner_lbl = _text("", size=12, weight=500)
+        status_row.addWidget(self.status_badge)
+        status_row.addSpacing(8)
+        status_row.addWidget(self.spinner_lbl)
+        status_row.addStretch()
+        root.addLayout(status_row)
 
-        # Badge & status header row
-        br = QHBoxLayout()
-        self.badge = QLabel("NO ISO SELECTED")
-        self.badge.setProperty("badge", "info")
-        self.spinner_lbl = _label("", size=12, bold=True)
-        br.addWidget(self.badge)
-        br.addSpacing(10)
-        br.addWidget(self.spinner_lbl)
-        br.addStretch()
-        cv.addLayout(br)
-        cv.addWidget(_sep())
-
-        # Stats grid — 3 columns × 2 rows
-        grid = QHBoxLayout()
-        grid.setSpacing(10)
-        self.val_volume    = self._stat_card(grid, "Volume Label")
-        self.val_installer = self._stat_card(grid, "Windows Installer")
-        self.val_image     = self._stat_card(grid, "Install Image")
-        self.val_editions  = self._stat_card(grid, "Editions Found")
-        self.val_est       = self._stat_card(grid, "Est. Compressed")
-        self.val_total     = self._stat_card(grid, "Total ISO Size")
-        cv.addLayout(grid)
-        root.addWidget(self.card)
+        # Metrics grid: 3 columns × 2 rows
+        grid = QGridLayout()
+        grid.setSpacing(8)
+        self.m_volume   = _MetricCard("VOLUME LABEL")
+        self.m_install  = _MetricCard("INSTALLER STATUS")
+        self.m_image    = _MetricCard("INSTALL IMAGE")
+        self.m_editions = _MetricCard("EDITIONS FOUND")
+        self.m_compress = _MetricCard("EST. COMPRESSED")
+        self.m_total    = _MetricCard("TOTAL ISO SIZE")
+        grid.addWidget(self.m_volume, 0, 0)
+        grid.addWidget(self.m_install, 0, 1)
+        grid.addWidget(self.m_image, 0, 2)
+        grid.addWidget(self.m_editions, 1, 0)
+        grid.addWidget(self.m_compress, 1, 1)
+        grid.addWidget(self.m_total, 1, 2)
+        root.addLayout(grid)
 
         self._spin_timer = QTimer(self)
         self._spin_timer.timeout.connect(self._tick)
         self.path_edit.textChanged.connect(self._on_path_changed)
 
-    @staticmethod
-    def _stat_card(parent_layout: QHBoxLayout, title: str) -> QLabel:
-        w = QFrame()
-        w.setStyleSheet("border:1px solid #27272a; border-radius:8px; padding:8px 10px;")
-        col = QVBoxLayout(w)
-        col.setSpacing(3)
-        col.setContentsMargins(0, 0, 0, 0)
-        col.addWidget(_label(title, muted=True, size=11))
-        val = QLabel("—")
-        val.setStyleSheet("font-size:12.5px; font-weight:600; background:transparent;")
-        val.setWordWrap(True)
-        col.addWidget(val)
-        parent_layout.addWidget(w)
-        return val
-
     def _tick(self) -> None:
         self._spin_idx = (self._spin_idx + 1) % len(self._SPIN)
-        self.spinner_lbl.setText(
-            f"<span>{self._SPIN[self._spin_idx]} Probing ISO structure…</span>"
-        )
+        self.spinner_lbl.setText(f"{self._SPIN[self._spin_idx]}  Analyzing ISO structure…")
 
     def _browse(self) -> None:
-        p, _ = QFileDialog.getOpenFileName(
-            self, "Select Windows ISO", "", "ISO Files (*.iso *.ISO)"
-        )
+        p, _ = QFileDialog.getOpenFileName(self, "Select ISO", "", "ISO Files (*.iso *.ISO)")
         if p:
-            self._set_iso_path(p)
+            self._set_path(p)
 
-    def _set_iso_path(self, path: str) -> None:
+    def _set_path(self, path: str) -> None:
         self.path_edit.setText(path)
 
     def _on_path_changed(self) -> None:
         p = Path(self.path_edit.text().strip())
         if not p.is_file():
-            self._reset("NO ISO SELECTED", "info")
-            self.next_enabled.emit(False)
+            self._reset()
             return
         if self.worker and self.worker.isRunning():
             self.worker.finished_ok.disconnect()
             self.worker.failed.disconnect()
             self.worker.quit()
             self.worker.wait(300)
-        self._reset("ANALYZING…", "info")
+        self._set_badge("ANALYZING…", "neutral")
         self._spin_timer.start(80)
-        self.log_cb(f"Probing Windows ISO: {p}")
+        self.log_cb(f"Probing: {p}")
         self.worker = ISOAnalyzeWorker(p)
         self.worker.finished_ok.connect(self._done)
         self.worker.failed.connect(self._fail)
@@ -471,108 +586,99 @@ class StepIsoSelect(QWidget):
         self.state["iso_info"] = info
 
         if info.is_windows_installer:
-            self._badge("✔ VALID WINDOWS INSTALLER", "success")
-            self.val_installer.setText("<span style='font-weight:700'>✔ Verified</span>")
+            self._set_badge("VALID WINDOWS INSTALLER", "success")
+            self.m_install.set_value("✓ Verified", "install.wim present")
         else:
-            self._badge("✖ INVALID WINDOWS ISO", "danger")
-            self.val_installer.setText(
-                "<span style='font-weight:700'>✖ install.wim missing</span>"
-            )
+            self._set_badge("INVALID ISO", "error")
+            self.m_install.set_value("✗ Missing", "install.wim not found")
 
-        self.val_volume.setText(
-            f"<b>{info.volume_label}</b>" if info.volume_label else "—"
-        )
+        self.m_volume.set_value(info.volume_label or "—")
         if info.install_image_path:
-            self.val_image.setText(
-                f"{info.install_image_path}<br>"
-                f"<span style='font-size:11px'>{_fmt_gb(info.install_image_size)}</span>"
+            self.m_image.set_value(
+                str(info.install_image_path),
+                _fmt_gb(info.install_image_size),
             )
         else:
-            self.val_image.setText("<span style='color:#71717a'>None</span>")
+            self.m_image.set_value("None")
 
         if info.wimlib_missing:
-            self.val_editions.setText(
-                "<span>⚠ wimlib required</span>"
-            )
+            self.m_editions.set_value("Requires wimlib", "Install to inspect editions")
         else:
             n = len(info.wim_images)
-            names = ", ".join(i.display_name for i in info.wim_images[:2])
-            extra = f" +{n-2} more" if n > 2 else ""
-            self.val_editions.setText(
-                f"<span style='font-weight:700'>{n} Edition{'s' if n!=1 else ''}</span>"
-                f"<br><span style='font-size:11px'>{names}{extra}</span>"
+            names = ", ".join(i.display_name for i in info.wim_images[:3])
+            self.m_editions.set_value(
+                f"{n} edition{'s' if n != 1 else ''}",
+                names,
             )
 
-        self.val_est.setText(
-            f"<span style='font-weight:700'>{_fmt_gb(info.estimated_compressed_size)}</span>"
-            "<br><span style='font-size:11px'>LZMS (~45% savings)</span>"
+        self.m_compress.set_value(
+            _fmt_gb(info.estimated_compressed_size),
+            "LZMS ~45% savings",
         )
-        self.val_total.setText(
-            f"<span style='font-weight:700'>{_fmt_gb(info.total_iso_size)}</span>"
-        )
+        self.m_total.set_value(_fmt_gb(info.total_iso_size))
 
         self.log_cb(
-            f"Probing finished — Volume: {info.volume_label} | "
-            f"Installer: {info.is_windows_installer} | Editions: {len(info.wim_images)}"
+            f"OK — {info.volume_label} | Installer: {info.is_windows_installer} | "
+            f"Editions: {len(info.wim_images)}"
         )
-        _fade_in(self.card)
+        _fade_in(self.m_volume, 200)
         self.next_enabled.emit(info.is_windows_installer)
 
-    def _fail(self, error: str) -> None:
+    def _fail(self, err: str) -> None:
         self._spin_timer.stop()
         self.spinner_lbl.setText("")
-        self._badge("UNABLE TO READ ISO", "danger")
-        self.val_installer.setText(
-            f"<span style='font-size:11px'>{error[:120]}</span>"
-        )
-        self.log_cb(f"ERROR probing ISO: {error}")
+        self._set_badge("READ ERROR", "error")
+        self.m_install.set_value("Error", err[:100])
+        self.log_cb(f"ERROR: {err}")
         self.next_enabled.emit(False)
 
-    def _badge(self, text: str, kind: str) -> None:
-        self.badge.setText(text)
-        self.badge.setProperty("badge", kind)
-        self.badge.style().unpolish(self.badge)
-        self.badge.style().polish(self.badge)
+    def _set_badge(self, text: str, kind: str) -> None:
+        self.status_badge.setText(text)
+        self.status_badge.setObjectName(f"badge_{kind}")
+        self.status_badge.style().unpolish(self.status_badge)
+        self.status_badge.style().polish(self.status_badge)
 
-    def _reset(self, badge_text: str, kind: str) -> None:
-        self._badge(badge_text, kind)
-        for lbl in (self.val_volume, self.val_installer, self.val_image,
-                    self.val_editions, self.val_est, self.val_total):
-            lbl.setText("—")
+    def _reset(self) -> None:
+        self._set_badge("NO FILE SELECTED", "neutral")
+        for m in (self.m_volume, self.m_install, self.m_image,
+                  self.m_editions, self.m_compress, self.m_total):
+            m.set_value("—")
+        self.next_enabled.emit(False)
 
+    # SHA-256 verification
     def _verify(self) -> None:
         iso = self.state.get("iso_path")
         if not iso:
-            QMessageBox.warning(self, "No ISO Selected", "Please select a valid Windows ISO file first.")
+            QMessageBox.warning(self, "No ISO", "Select an ISO file first.")
             return
         self.verify_btn.setEnabled(False)
-        self.verify_btn.setText("Verifying Hash…")
+        self.verify_btn.setText("Verifying…")
         self.verify_bar.setVisible(True)
         self._sha_w = SHA256VerifyWorker(iso)
         self._sha_w.progress.connect(lambda p, _: self.verify_bar.setValue(int(p)))
-        self._sha_w.finished_ok.connect(self._sha_done)
-        self._sha_w.failed.connect(self._sha_fail)
+        self._sha_w.finished_ok.connect(self._sha_ok)
+        self._sha_w.failed.connect(self._sha_err)
         self._sha_w.start()
 
-    def _sha_done(self, res: object) -> None:
+    def _sha_ok(self, res: object) -> None:
         self.verify_btn.setEnabled(True)
-        self.verify_btn.setText("  🔍 Verify Hash")
+        self.verify_btn.setText("Verify SHA-256")
         self.verify_bar.setVisible(False)
         QMessageBox.information(
-            self, "SHA-256 Verification Result",
-            f"Calculated Hash:\n{res.calculated_hash}\n\nStatus: {res.official_name}",  # type: ignore[attr-defined]
+            self, "SHA-256 Result",
+            f"Hash: {res.calculated_hash}\nStatus: {res.official_name}",  # type: ignore[attr-defined]
         )
 
-    def _sha_fail(self, msg: str) -> None:
+    def _sha_err(self, msg: str) -> None:
         self.verify_btn.setEnabled(True)
-        self.verify_btn.setText("  🔍 Verify Hash")
+        self.verify_btn.setText("Verify SHA-256")
         self.verify_bar.setVisible(False)
-        QMessageBox.critical(self, "Verification Error", msg)
+        QMessageBox.critical(self, "Verify Error", msg)
 
 
-# ─────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════
 # STEP 2 — EDITION SELECT
-# ─────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════
 
 class StepEditionSelect(QWidget):
     next_enabled = pyqtSignal(bool)
@@ -587,54 +693,40 @@ class StepEditionSelect(QWidget):
         root.setSpacing(14)
         root.setContentsMargins(0, 0, 0, 0)
 
-        hdr = QLabel("Select Windows Editions to Keep")
-        hdr.setProperty("heading", True)
-        sub = QLabel("Uncheck unwanted Windows editions — removing unused editions saves 1–2 GB of disk space per edition.")
-        sub.setProperty("subheading", True)
-        root.addWidget(hdr)
-        root.addWidget(sub)
-        root.addWidget(_sep())
-
-        # Action toolbar
+        # Toolbar
         tb = QHBoxLayout()
-        sa = QPushButton("  ✔ Select All")
-        sn = QPushButton("  ✖ Deselect All")
-        sa.setProperty("secondary", True)
-        sn.setProperty("secondary", True)
-        sa.setMinimumHeight(36)
-        sa.setMinimumWidth(120)
-        sn.setMinimumHeight(36)
-        sn.setMinimumWidth(130)
+        tb.setSpacing(8)
+        sa = _btn("Select all", "ghost")
+        sn = _btn("Deselect all", "ghost")
         sa.clicked.connect(lambda: self._check_all(True))
         sn.clicked.connect(lambda: self._check_all(False))
+        self._count_lbl = _text("0 editions", size=12, weight=600)
         tb.addWidget(sa)
         tb.addWidget(sn)
         tb.addStretch()
-        self._count_lbl = _label("0 editions", bold=True, size=13)
         tb.addWidget(self._count_lbl)
         root.addLayout(tb)
 
-        # Info callout label for single-edition ISOs
-        self.single_info_lbl = _label("", muted=True, size=12)
-        self.single_info_lbl.setVisible(False)
-        root.addWidget(self.single_info_lbl)
+        self.single_info = _text("", size=12, weight=400, color="#71717a")
+        self.single_info.setVisible(False)
+        self.single_info.setWordWrap(True)
+        root.addWidget(self.single_info)
 
-        # Edition list container
         self.list = QListWidget()
         root.addWidget(self.list, 1)
 
-        # Summary card
-        footer = _card()
+        # Footer summary
+        footer = _card("card_elevated")
         fl = QHBoxLayout(footer)
-        fl.setContentsMargins(16, 12, 16, 12)
-        self.sum_sel = _label("Selected: 0 of 0", bold=True, size=13)
-        self.sum_size = _label("Est. compressed output size: ~0.00 GB", bold=True, size=13)
+        fl.setContentsMargins(16, 10, 16, 10)
+        self.sum_sel = _text("Selected: 0 / 0", size=12, weight=600)
+        self.sum_size = _text("~0.00 GB estimated", size=12, weight=500, color="#71717a")
         fl.addWidget(self.sum_sel)
         fl.addStretch()
         fl.addWidget(self.sum_size)
         root.addWidget(footer)
 
-        self.list.itemChanged.connect(self._update_counter)
+        self.list.itemChanged.connect(self._update)
 
     def _check_all(self, checked: bool) -> None:
         s = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
@@ -652,26 +744,24 @@ class StepEditionSelect(QWidget):
 
         if info.wimlib_missing:
             self._show_notice()
-            item = QListWidgetItem(
-                "  ⚠️  All Editions  —  wimlib tool missing, keeping all editions by default"
-            )
+            item = QListWidgetItem("  ⚠  All Editions — wimlib required for individual selection")
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Checked)
-            placeholder = WIMImageInfo(
+            ph = WIMImageInfo(
                 index=0, name="All Editions",
-                description="Keep all (wimlib required to select individual editions)",
+                description="Keep all editions (wimlib not installed)",
                 size_bytes=info.install_image_size or info.total_iso_size,
             )
-            item.setData(Qt.ItemDataRole.UserRole, placeholder)
+            item.setData(Qt.ItemDataRole.UserRole, ph)
             self.list.addItem(item)
-            self.single_info_lbl.setVisible(False)
+            self.single_info.setVisible(False)
         else:
             if self._notice:
                 self._notice.setVisible(False)
             for img in info.wim_images:
-                size_gb = img.size_bytes / (1024 ** 3)
+                sz = img.size_bytes / (1024 ** 3)
                 item = QListWidgetItem(
-                    f"  [Index {img.index}]   {img.display_name}   ·   {size_gb:.2f} GB"
+                    f"  [{img.index}]   {img.display_name}   ·   {sz:.2f} GB"
                 )
                 item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
                 item.setCheckState(Qt.CheckState.Checked)
@@ -679,91 +769,76 @@ class StepEditionSelect(QWidget):
                 self.list.addItem(item)
 
             if len(info.wim_images) == 1:
-                self.single_info_lbl.setText(
-                    "ℹ️ Note: This ISO natively contains 1 edition image. All images inside install.wim are listed above."
+                self.single_info.setText(
+                    "ℹ  This ISO contains a single edition image. "
+                    "This is normal for standard Windows 11 Pro ISOs."
                 )
-                self.single_info_lbl.setVisible(True)
+                self.single_info.setVisible(True)
             else:
-                self.single_info_lbl.setVisible(False)
+                self.single_info.setVisible(False)
 
         n = self.list.count()
-        self._count_lbl.setText(f"{n} edition{'s' if n != 1 else ''} available")
-        self._update_counter()
+        self._count_lbl.setText(f"{n} edition{'s' if n != 1 else ''}")
+        self._update()
         _fade_in(self.list)
 
     def _show_notice(self) -> None:
         if self._notice:
             self._notice.setVisible(True)
             return
-        notice = _card()
+        notice = _card("card_elevated")
         nl = QHBoxLayout(notice)
-        nl.setContentsMargins(16, 12, 16, 12)
-        ico = QLabel("⚠️")
-        ico.setStyleSheet("font-size:20px; background:transparent;")
-        lbl = QLabel(
-            "<b>wimlib dependency not installed.</b> "
-            "<span>Install wimlib to inspect and remove specific editions.</span>"
+        nl.setContentsMargins(14, 10, 14, 10)
+        nl.addWidget(_text("⚠", size=18))
+        nl.addSpacing(8)
+        t = _text(
+            "<b>wimlib not installed.</b> "
+            "Install it to inspect and remove individual Windows editions.",
+            size=12,
         )
-        lbl.setWordWrap(True)
-        self._install_btn = QPushButton("  ⚡ Install wimlib Now")
-        self._install_btn.setProperty("secondary", True)
-        self._install_btn.setMinimumHeight(36)
-        self._install_btn.setMinimumWidth(160)
+        t.setWordWrap(True)
+        nl.addWidget(t, 1)
+        self._install_btn = _btn("Install wimlib", "secondary")
+        self._install_btn.setFixedHeight(32)
         self._install_btn.clicked.connect(self._install_wimlib)
-        nl.addWidget(ico)
-        nl.addWidget(lbl, 1)
         nl.addWidget(self._install_btn)
-        self.layout().insertWidget(4, notice)
+        self.layout().insertWidget(2, notice)
         self._notice = notice
 
     def _install_wimlib(self) -> None:
         if self._install_btn:
             self._install_btn.setEnabled(False)
             self._install_btn.setText("Installing…")
-        self._wim_worker = WimlibInstallWorker()
-        self._wim_worker.log_line.connect(self._relay_log)
-        self._wim_worker.finished_ok.connect(self._wim_done)
-        self._wim_worker.failed.connect(self._wim_error)
-        self._wim_worker.start()
-
-    def _relay_log(self, msg: str) -> None:
-        p = self.parent()
-        while p:
-            if hasattr(p, "log_message"):
-                p.log_message(msg)  # type: ignore[union-attr]
-                break
-            p = p.parent() if hasattr(p, "parent") else None
+        self._wim_w = WimlibInstallWorker()
+        self._wim_w.finished_ok.connect(self._wim_done)
+        self._wim_w.failed.connect(self._wim_err)
+        self._wim_w.start()
 
     def _wim_done(self, ok: bool) -> None:
         if self._install_btn:
             self._install_btn.setEnabled(True)
-            self._install_btn.setText("  ⚡ Install wimlib Now")
+            self._install_btn.setText("Install wimlib")
         if not ok:
-            QMessageBox.warning(
-                self, "Installation Failed",
-                "wimlib could not be installed automatically.\n\n"
-                "Download wimlib-imagex.exe manually from:\n  https://wimlib.net/downloads/\n"
-            )
+            QMessageBox.warning(self, "Failed", "wimlib could not be installed.")
             return
         info: ISOInfo | None = self.state.get("iso_info")
-        if not info:
-            return
-        self._re = ISOAnalyzeWorker(info.path)
-        self._re.finished_ok.connect(self._re_done)
-        self._re.failed.connect(lambda e: QMessageBox.warning(self, "Re-analysis Failed", e))
-        self._re.start()
+        if info:
+            self._re = ISOAnalyzeWorker(info.path)
+            self._re.finished_ok.connect(self._re_done)
+            self._re.failed.connect(lambda e: QMessageBox.warning(self, "Error", e))
+            self._re.start()
 
-    def _wim_error(self, err: str) -> None:
+    def _wim_err(self, err: str) -> None:
         if self._install_btn:
             self._install_btn.setEnabled(True)
-            self._install_btn.setText("Retry Install")
-        QMessageBox.critical(self, "Install Error", err)
+            self._install_btn.setText("Retry")
+        QMessageBox.critical(self, "Error", err)
 
     def _re_done(self, info: ISOInfo) -> None:
         self.state["iso_info"] = info
         self.refresh()
 
-    def _update_counter(self) -> None:
+    def _update(self) -> None:
         sel = total_bytes = 0
         for i in range(self.list.count()):
             item = self.list.item(i)
@@ -774,12 +849,8 @@ class StepEditionSelect(QWidget):
                     total_bytes += img.size_bytes
         n = self.list.count()
         est_gb = total_bytes * 0.45 / (1024 ** 3)
-        self.sum_sel.setText(
-            f"Selected: <b>{sel}</b> of {n} edition{'s' if n != 1 else ''}"
-        )
-        self.sum_size.setText(
-            f"Est. compressed output: <b>~{est_gb:.2f} GB</b>"
-        )
+        self.sum_sel.setText(f"Selected: {sel} / {n}")
+        self.sum_size.setText(f"~{est_gb:.2f} GB estimated output")
         self.next_enabled.emit(sel > 0)
 
     def save_selection(self) -> None:
@@ -793,85 +864,74 @@ class StepEditionSelect(QWidget):
         self.state["indices"] = indices
 
 
-# ─────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════
 # STEP 3 — CUSTOMIZATION
-# ─────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════
 
 class StepCustomization(QWidget):
     def __init__(self, state: dict) -> None:
         super().__init__()
         self.state = state
+
         root = QVBoxLayout(self)
         root.setSpacing(14)
         root.setContentsMargins(0, 0, 0, 0)
 
-        hdr = QLabel("Customization & Optimizations")
-        hdr.setProperty("heading", True)
-        sub = QLabel("Select automated Windows 11 hardware bypasses, user setup defaults, and driver slipstreaming.")
-        sub.setProperty("subheading", True)
-        root.addWidget(hdr)
-        root.addWidget(sub)
-        root.addWidget(_sep())
-
-        # Windows 11 Bypasses
-        bypass_box = QGroupBox("⚡ Windows 11 Hardware Bypasses")
-        bb = QVBoxLayout(bypass_box)
-        bb.setSpacing(10)
-        self.chk_tpm = QCheckBox(
-            "Bypass TPM 2.0, SecureBoot, RAM & CPU requirements (Auto-inject autounattend.xml registry bypass)"
-        )
+        # Bypass section
+        bypass = QGroupBox("Windows 11 Hardware Bypasses")
+        bb = QVBoxLayout(bypass)
+        bb.setSpacing(8)
+        self.chk_tpm = QCheckBox("Bypass TPM 2.0, Secure Boot, RAM & CPU requirements")
         self.chk_tpm.setChecked(True)
-        self.chk_msa = QCheckBox(
-            "Bypass mandatory Microsoft Account requirement (BypassNRO — forces local account creation option)"
-        )
+        self.chk_msa = QCheckBox("Bypass Microsoft Account requirement (BypassNRO)")
         self.chk_msa.setChecked(True)
-        self.chk_tel = QCheckBox(
-            "Disable telemetry, diagnostic data collection & unwanted background services"
-        )
+        self.chk_tel = QCheckBox("Disable telemetry & diagnostic data collection")
         self.chk_tel.setChecked(True)
         bb.addWidget(self.chk_tpm)
         bb.addWidget(self.chk_msa)
         bb.addWidget(self.chk_tel)
-        root.addWidget(bypass_box)
+        root.addWidget(bypass)
 
-        # User identity defaults
-        user_box = QGroupBox("👤 User Identity & Hostname")
+        # User identity
+        user_box = QGroupBox("User Identity & Hostname")
         uf = QVBoxLayout(user_box)
-        uf.setSpacing(10)
+        uf.setSpacing(8)
         urow = QHBoxLayout()
+        urow.setSpacing(12)
         self.username = QLineEdit("User")
-        self.username.setMinimumHeight(36)
+        self.username.setFixedHeight(36)
         self.compname = QLineEdit("WinISO-PC")
-        self.compname.setMinimumHeight(36)
-        urow.addWidget(QLabel("Default User Name:"))
+        self.compname.setFixedHeight(36)
+        urow.addWidget(_text("Username", size=12, weight=500))
         urow.addWidget(self.username)
-        urow.addSpacing(16)
-        urow.addWidget(QLabel("Computer Hostname:"))
+        urow.addSpacing(8)
+        urow.addWidget(_text("Hostname", size=12, weight=500))
         urow.addWidget(self.compname)
         uf.addLayout(urow)
         root.addWidget(user_box)
 
         # Driver slipstreaming
-        drv_box = QGroupBox("📁 Driver Slipstreaming (Optional)")
+        drv_box = QGroupBox("Driver Slipstreaming (Optional)")
         dv = QVBoxLayout(drv_box)
         drow = QHBoxLayout()
+        drow.setSpacing(8)
         self.driver_edit = QLineEdit()
-        self.driver_edit.setPlaceholderText("Select folder containing extracted driver files (.inf format)…")
-        self.driver_edit.setMinimumHeight(36)
-        drv_btn = QPushButton("  📂 Browse Drivers")
-        drv_btn.setProperty("secondary", True)
-        drv_btn.setMinimumHeight(36)
-        drv_btn.setMinimumWidth(150)
+        self.driver_edit.setPlaceholderText("Select folder with .inf driver files…")
+        self.driver_edit.setFixedHeight(36)
+        drv_btn = _btn("Browse…", "secondary")
+        drv_btn.setFixedHeight(36)
         drv_btn.clicked.connect(self._browse_drivers)
         drow.addWidget(self.driver_edit, 1)
         drow.addWidget(drv_btn)
         dv.addLayout(drow)
         root.addWidget(drv_box)
 
+        root.addStretch()
+
     def _browse_drivers(self) -> None:
-        folder = QFileDialog.getExistingDirectory(self, "Select Driver Folder")
-        if folder:
-            self.driver_edit.setText(folder)
+        d = QFileDialog.getExistingDirectory(self, "Select Driver Folder")
+        if d:
+            self.driver_edit.setText(d)
 
     def save_settings(self) -> None:
         from winiso_toolkit.iso.unattended import BypassOptions
@@ -889,95 +949,54 @@ class StepCustomization(QWidget):
         self.state["driver_dir"] = Path(drv) if drv else None
 
 
-# ─────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════
 # STEP 4 — COMPRESS
-# ─────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════
 
 class StepCompress(QWidget):
     def __init__(self, state: dict, parent_win: "MainWindow") -> None:
         super().__init__()
-        self.state = state
-        self.parent_win = parent_win
+        self.state, self.parent_win = state, parent_win
 
         root = QVBoxLayout(self)
         root.setSpacing(14)
         root.setContentsMargins(0, 0, 0, 0)
 
-        hdr = QLabel("Compressing & Rebuilding ISO")
-        hdr.setProperty("heading", True)
-        root.addWidget(hdr)
-        root.addWidget(_sep())
-
         # Progress card
-        self.pcard = _card()
-        pc = QVBoxLayout(self.pcard)
+        pcard = _card()
+        pc = QVBoxLayout(pcard)
+        pc.setContentsMargins(20, 18, 20, 18)
         pc.setSpacing(12)
-
-        self.status_lbl = _label("Initializing build pipeline…", bold=True, size=13)
+        self.status_lbl = _text("Waiting to start…", size=13, weight=600)
         self.bar = QProgressBar()
-        self.bar.setMinimumHeight(24)
-
-        # Phase indicators
-        phases = QHBoxLayout()
-        self._phase_labels: list[QLabel] = []
-        for phase in ["1. Analyze", "2. Compress", "3. Extract ISO", "4. Inject", "5. Rebuild", "6. Done"]:
-            pl = QLabel(phase)
-            pl.setStyleSheet("font-size:11px; font-weight:600; background:transparent;")
-            pl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            phases.addWidget(pl)
-            self._phase_labels.append(pl)
-
         pc.addWidget(self.status_lbl)
         pc.addWidget(self.bar)
-        pc.addLayout(phases)
-        root.addWidget(self.pcard)
+        root.addWidget(pcard)
 
-        # Stats metrics grid
-        stats = _card()
-        sl = QHBoxLayout(stats)
-        sl.setContentsMargins(16, 12, 16, 12)
-        self.stat_speed = self._stat(sl, "Processing Speed", "—")
-        self.stat_eta   = self._stat(sl, "Estimated Time", "—")
-        self.stat_in    = self._stat(sl, "Source Size", "—")
-        self.stat_out   = self._stat(sl, "Output Size", "—")
-        self.stat_ratio = self._stat(sl, "Space Saved", "—")
-        root.addWidget(stats)
+        # Metrics row
+        grid = QHBoxLayout()
+        grid.setSpacing(8)
+        self.m_speed = _MetricCard("SPEED")
+        self.m_eta   = _MetricCard("ETA")
+        self.m_src   = _MetricCard("SOURCE")
+        self.m_out   = _MetricCard("OUTPUT")
+        self.m_saved = _MetricCard("SAVED")
+        for m in (self.m_speed, self.m_eta, self.m_src, self.m_out, self.m_saved):
+            grid.addWidget(m)
+        root.addLayout(grid)
 
-    @staticmethod
-    def _stat(layout: QHBoxLayout, key: str, val: str) -> QLabel:
-        w = QFrame()
-        w.setStyleSheet("border:1px solid #27272a; border-radius:8px; padding:8px 10px;")
-        c = QVBoxLayout(w)
-        c.setSpacing(3)
-        c.setContentsMargins(0, 0, 0, 0)
-        c.addWidget(_label(key, muted=True, size=11))
-        v = QLabel(val)
-        v.setStyleSheet("font-size:16px; font-weight:700; background:transparent;")
-        c.addWidget(v)
-        layout.addWidget(w)
-        return v
-
-    def _update_phase(self, pct: float) -> None:
-        thresholds = [10, 55, 65, 72, 80, 100]
-        for i, (lbl, thresh) in enumerate(zip(self._phase_labels, thresholds)):
-            if pct >= thresh:
-                lbl.setStyleSheet("font-size:11px; font-weight:700; background:transparent;")
-            elif pct >= (thresholds[i - 1] if i > 0 else 0):
-                lbl.setStyleSheet("font-size:11px; font-weight:700; background:transparent;")
-            else:
-                lbl.setStyleSheet("font-size:11px; font-weight:600; background:transparent;")
+        root.addStretch()
 
     def start(self) -> None:
         iso_path: Path = self.state["iso_path"]
         indices: list[int] = self.state.get("indices", [1])
         output = iso_path.with_name(f"{iso_path.stem}_compressed.iso")
         self.state["output_iso"] = output
-        self._start_time = time.time()
+        self._t0 = time.time()
 
         info: ISOInfo | None = self.state.get("iso_info")
-        src_size = info.install_image_size if info else 0
-        if src_size:
-            self.stat_in.setText(_fmt_gb(src_size))
+        if info and info.install_image_size:
+            self.m_src.set_value(_fmt_gb(info.install_image_size))
 
         self.worker = WorkerThread(
             WinISOPipeline().compress_iso,
@@ -985,42 +1004,40 @@ class StepCompress(QWidget):
             bypass_options=self.state.get("bypass_options"),
             driver_dir=self.state.get("driver_dir"),
         )
-        self.worker.progress.connect(self._on_progress)
-        self.worker.finished_ok.connect(self._on_done)
-        self.worker.failed.connect(self._on_fail)
+        self.worker.progress.connect(self._prog)
+        self.worker.finished_ok.connect(self._ok)
+        self.worker.failed.connect(self._err)
         self.worker.start()
 
-    def _on_progress(self, pct: float, msg: str) -> None:
+    def _prog(self, pct: float, msg: str) -> None:
         self.bar.setValue(int(pct))
         self.status_lbl.setText(msg)
-        self._update_phase(pct)
-        elapsed = max(time.time() - self._start_time, 0.1)
+        elapsed = max(time.time() - self._t0, 0.1)
         if pct > 5:
             eta = elapsed / (pct / 100) - elapsed
-            self.stat_eta.setText(f"{int(eta // 60)}m {int(eta % 60)}s")
-            speed = (pct / 100) / elapsed
-            self.stat_speed.setText(f"{speed * 100:.1f}%/s")
+            self.m_eta.set_value(f"{int(eta // 60)}m {int(eta % 60)}s")
+            self.m_speed.set_value(f"{(pct / 100) / elapsed * 100:.1f}%/s")
 
-    def _on_done(self, result: object) -> None:
+    def _ok(self, result: object) -> None:
         self.state["output_iso"] = Path(str(result))
         out = self.state["output_iso"]
         if out.exists():
-            self.stat_out.setText(_fmt_gb(out.stat().st_size))
+            self.m_out.set_value(_fmt_gb(out.stat().st_size))
             info: ISOInfo | None = self.state.get("iso_info")
             src = info.install_image_size if info else 0
             if src:
-                ratio = (1 - out.stat().st_size / src) * 100
-                self.stat_ratio.setText(f"−{ratio:.1f}%")
+                saved = (1 - out.stat().st_size / src) * 100
+                self.m_saved.set_value(f"−{saved:.1f}%")
         self.parent_win.advance()
 
-    def _on_fail(self, msg: str) -> None:
+    def _err(self, msg: str) -> None:
         QMessageBox.critical(self, "Compression Failed", msg)
         self.parent_win.set_back_enabled(True)
 
 
-# ─────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════
 # STEP 5 — USB SELECT
-# ─────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════
 
 class StepUsbSelect(QWidget):
     next_enabled = pyqtSignal(bool)
@@ -1033,126 +1050,114 @@ class StepUsbSelect(QWidget):
         root.setSpacing(14)
         root.setContentsMargins(0, 0, 0, 0)
 
-        hdr = QLabel("Select Target USB Flash Drive")
-        hdr.setProperty("heading", True)
-        sub = QLabel("Select target USB drive. <b style='color:#ef4444'>All existing partitions will be formatted.</b>")
-        sub.setProperty("subheading", True)
-        root.addWidget(hdr)
-        root.addWidget(sub)
-        root.addWidget(_sep())
-
-        # USB Toolbar
+        # Toolbar
         tb = QHBoxLayout()
-        refresh_btn = QPushButton("  🔄 Refresh USB List")
-        refresh_btn.setProperty("secondary", True)
-        refresh_btn.setMinimumHeight(36)
-        refresh_btn.setMinimumWidth(150)
-        refresh_btn.clicked.connect(self.refresh)
-
-        health_btn = QPushButton("  📊 Health & Speed Test")
-        health_btn.setProperty("secondary", True)
-        health_btn.setMinimumHeight(36)
-        health_btn.setMinimumWidth(170)
-        health_btn.clicked.connect(self._health_check)
-
-        tb.addWidget(refresh_btn)
-        tb.addWidget(health_btn)
+        tb.setSpacing(8)
+        refresh = _btn("Refresh", "secondary")
+        refresh.setFixedHeight(34)
+        refresh.clicked.connect(self.refresh)
+        health = _btn("Health check", "ghost")
+        health.setFixedHeight(34)
+        health.clicked.connect(self._health)
+        tb.addWidget(refresh)
+        tb.addWidget(health)
         tb.addStretch()
         root.addLayout(tb)
 
-        # USB Combo
         self.combo = QComboBox()
-        self.combo.setMinimumHeight(40)
+        self.combo.setFixedHeight(40)
         self.combo.currentIndexChanged.connect(self._validate)
         root.addWidget(self.combo)
 
         # Capacity card
         self.cap_card = _card()
-        cap_l = QHBoxLayout(self.cap_card)
-        cap_l.setContentsMargins(16, 12, 16, 12)
-        self.cap_icon = QLabel("⬤")
-        self.cap_icon.setStyleSheet("font-size:15px; background:transparent;")
-        self.cap_lbl = _label("Select a USB drive to verify capacity.", muted=True)
-        cap_l.addWidget(self.cap_icon)
-        cap_l.addSpacing(8)
-        cap_l.addWidget(self.cap_lbl, 1)
+        cl = QHBoxLayout(self.cap_card)
+        cl.setContentsMargins(16, 10, 16, 10)
+        self.cap_badge = _badge("—", "neutral")
+        self.cap_text = _text("Select a USB drive", size=12, weight=400, color="#71717a")
+        cl.addWidget(self.cap_badge)
+        cl.addSpacing(8)
+        cl.addWidget(self.cap_text, 1)
         root.addWidget(self.cap_card)
 
-        # Boot options box
-        opts_box = QGroupBox("⚙️ Boot Mode & Partitioning Strategy")
-        ob = QVBoxLayout(opts_box)
-        ob.setSpacing(10)
+        # Boot options
+        opts = QGroupBox("Boot Mode & Partitioning")
+        ol = QVBoxLayout(opts)
+        ol.setSpacing(8)
         self.boot_combo = QComboBox()
         self.boot_combo.addItems([
-            "Both UEFI + Legacy MBR (Maximum Compatibility)",
-            "UEFI Only (GPT Partition Scheme / Modern PCs)",
+            "UEFI + Legacy MBR (Maximum Compatibility)",
+            "UEFI Only (GPT — Modern PCs)",
             "Legacy MBR Only (Older BIOS)",
         ])
-        self.boot_combo.setMinimumHeight(36)
-        self.dual_chk = QCheckBox(
-            "Use Dual-Partition layout (FAT32 EFI Boot + NTFS Data — supports install.wim > 4 GB)"
-        )
+        self.boot_combo.setFixedHeight(36)
+        self.dual_chk = QCheckBox("Dual-partition layout (FAT32 boot + NTFS data for install.wim > 4 GB)")
         self.dual_chk.setChecked(True)
-        ob.addWidget(QLabel("Target Boot Mode:"))
-        ob.addWidget(self.boot_combo)
-        ob.addSpacing(4)
-        ob.addWidget(self.dual_chk)
-        root.addWidget(opts_box)
+        ol.addWidget(self.boot_combo)
+        ol.addWidget(self.dual_chk)
+        root.addWidget(opts)
+
+        root.addStretch()
 
     def refresh(self) -> None:
         self.combo.clear()
         devices = USBDetector().list_devices()
         self.state["usb_devices"] = devices
         if not devices:
-            self.combo.addItem("No USB drives detected — insert USB flash drive and click Refresh")
+            self.combo.addItem("No USB drives detected")
         for d in devices:
             self.combo.addItem(
-                f"  💾 {d.name}   ·   {d.size_gb:.1f} GB   ·   {d.filesystem or 'Unknown FS'}  [{d.path}]",
+                f"{d.name}  ·  {d.size_gb:.1f} GB  ·  {d.filesystem or '?'}  [{d.path}]",
                 d,
             )
         self._validate()
         _fade_in(self.combo)
 
-    def _health_check(self) -> None:
-        device: USBDevice | None = self.combo.currentData()
-        if not device:
-            QMessageBox.warning(self, "No USB Selected", "Please select a USB drive first.")
+    def _health(self) -> None:
+        dev: USBDevice | None = self.combo.currentData()
+        if not dev:
+            QMessageBox.warning(self, "No USB", "Select a USB drive first.")
             return
         try:
             from winiso_toolkit.usb.health import USBHealthChecker
-            rep = USBHealthChecker().run_quick_health_check(Path(device.path))
-            icon = "✔" if rep.capacity_verified else "✖"
+            r = USBHealthChecker().run_quick_health_check(Path(dev.path))
             QMessageBox.information(
-                self, "USB Health & Benchmark Report",
-                f"Drive Name: {device.name}  [{device.path}]\n"
-                f"Write Speed: {rep.write_speed_mbps:.1f} MB/s\n"
-                f"Capacity Verification: {icon}\n\n"
-                f"Status: {rep.status_message}",
+                self, "Health Report",
+                f"Drive: {dev.name} [{dev.path}]\n"
+                f"Write: {r.write_speed_mbps:.1f} MB/s\n"
+                f"Capacity: {'✓ OK' if r.capacity_verified else '✗ FAIL'}\n"
+                f"Status: {r.status_message}",
             )
-        except Exception as exc:
-            QMessageBox.critical(self, "Health Check Error", str(exc))
+        except Exception as e:
+            QMessageBox.critical(self, "Error", str(e))
 
     def _validate(self) -> None:
-        device: USBDevice | None = self.combo.currentData()
-        output: Path | None = self.state.get("output_iso")
-        if not device or not output or not output.exists():
-            self.cap_icon.setStyleSheet("font-size:15px; background:transparent;")
-            self.cap_lbl.setText("Select a USB drive to verify capacity.")
+        dev: USBDevice | None = self.combo.currentData()
+        out: Path | None = self.state.get("output_iso")
+        if not dev or not out or not out.exists():
+            self.cap_badge.setText("—")
+            self.cap_badge.setObjectName("badge_neutral")
+            self.cap_badge.style().unpolish(self.cap_badge)
+            self.cap_badge.style().polish(self.cap_badge)
+            self.cap_text.setText("Select a USB drive to verify capacity")
             self.next_enabled.emit(False)
             return
-        ok, msg = USBCreator().validate_capacity(device.size_bytes, output.stat().st_size)
+        ok, msg = USBCreator().validate_capacity(dev.size_bytes, out.stat().st_size)
         if ok:
-            self.cap_icon.setStyleSheet("font-size:15px; background:transparent;")
-            self.cap_lbl.setText(
-                f"<span style='font-weight:700'>✔ Sufficient Capacity</span> "
-                f"— {device.size_gb:.1f} GB drive available (≥ {output.stat().st_size/(1024**3):.1f} GB required)"
+            self.cap_badge.setText("OK")
+            self.cap_badge.setObjectName("badge_success")
+            self.cap_text.setText(
+                f"{dev.size_gb:.1f} GB available  ≥  {out.stat().st_size / (1024**3):.1f} GB required"
             )
-            self.state["usb_device"] = device
+            self.state["usb_device"] = dev
             self.next_enabled.emit(True)
         else:
-            self.cap_icon.setStyleSheet("font-size:15px; background:transparent;")
-            self.cap_lbl.setText(f"<span style='font-weight:700'>✖ {msg}</span>")
+            self.cap_badge.setText("FAIL")
+            self.cap_badge.setObjectName("badge_error")
+            self.cap_text.setText(msg)
             self.next_enabled.emit(False)
+        self.cap_badge.style().unpolish(self.cap_badge)
+        self.cap_badge.style().polish(self.cap_badge)
 
     def save_selection(self) -> None:
         self.state["boot_mode"] = [BootMode.BOTH, BootMode.UEFI, BootMode.LEGACY][
@@ -1161,9 +1166,9 @@ class StepUsbSelect(QWidget):
         self.state["use_dual_partition"] = self.dual_chk.isChecked()
 
 
-# ─────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════
 # STEP 6 — CONFIRM
-# ─────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════
 
 class StepConfirm(QWidget):
     next_enabled = pyqtSignal(bool)
@@ -1176,47 +1181,40 @@ class StepConfirm(QWidget):
         root.setSpacing(14)
         root.setContentsMargins(0, 0, 0, 0)
 
-        hdr = QLabel("Confirm & Write USB Media")
-        hdr.setProperty("heading", True)
-        root.addWidget(hdr)
-        root.addWidget(_sep())
-
-        # Executive summary dashboard
-        self.summary_card = _card()
-        sc = QVBoxLayout(self.summary_card)
-        sc.setSpacing(8)
-        self.sum_lbl = QLabel("")
+        # Summary card
+        self.sum_card = _card()
+        sl = QVBoxLayout(self.sum_card)
+        sl.setContentsMargins(20, 18, 20, 18)
+        sl.setSpacing(6)
+        self.sum_lbl = QLabel()
         self.sum_lbl.setWordWrap(True)
-        self.sum_lbl.setStyleSheet("font-size:13px; line-height:1.6;")
-        sc.addWidget(self.sum_lbl)
-        root.addWidget(self.summary_card)
+        self.sum_lbl.setStyleSheet("font-size:12.5px; line-height:1.7;")
+        sl.addWidget(self.sum_lbl)
+        root.addWidget(self.sum_card)
 
-        # Danger warning card
-        warn = _card()
-        warn.setStyleSheet("border:1px solid #ef4444; border-radius:10px;")
+        # Warning
+        warn = _card("card_elevated")
         wl = QHBoxLayout(warn)
         wl.setContentsMargins(16, 12, 16, 12)
-        warn_ico = QLabel("⚠️")
-        warn_ico.setStyleSheet("font-size:26px; background:transparent;")
-        warn_txt = QLabel(
-            "<b style='font-size:13.5px'>CRITICAL WARNING:</b><br>"
-            "<span>ALL DATA on the selected target USB drive will be permanently erased. "
-            "Please ensure you have backed up any essential files.</span>"
+        wl.addWidget(_text("⚠", size=20))
+        wl.addSpacing(10)
+        wt = _text(
+            "<b>All data on the selected USB drive will be permanently erased.</b><br>"
+            "Ensure you have backed up any important files before proceeding.",
+            size=12,
         )
-        warn_txt.setWordWrap(True)
-        wl.addWidget(warn_ico)
-        wl.addWidget(warn_txt, 1)
+        wt.setWordWrap(True)
+        wl.addWidget(wt, 1)
         root.addWidget(warn)
 
-        # Safety confirmation checkbox
-        self.confirm_chk = QCheckBox(
-            "I understand — format the USB drive and create a bootable Windows installer media"
-        )
-        self.confirm_chk.setStyleSheet("font-size:13px; font-weight:700;")
+        self.confirm_chk = QCheckBox("I understand — format the drive and create bootable media")
+        self.confirm_chk.setStyleSheet("font-size:12.5px; font-weight:600;")
         self.confirm_chk.stateChanged.connect(
             lambda: self.next_enabled.emit(self.confirm_chk.isChecked())
         )
         root.addWidget(self.confirm_chk)
+
+        root.addStretch()
 
     def refresh(self) -> None:
         iso: Path | None = self.state.get("output_iso")
@@ -1225,89 +1223,71 @@ class StepConfirm(QWidget):
         boot: BootMode = self.state.get("boot_mode", BootMode.BOTH)
         dual: bool = self.state.get("use_dual_partition", False)
 
-        edition_str = "All (keep-all mode)" if indices == [0] else str(indices)
-        iso_size = f"{iso.stat().st_size / (1024**3):.2f} GB" if iso and iso.exists() else "?"
+        ed = "All" if indices == [0] else str(indices)
+        sz = f"{iso.stat().st_size / (1024**3):.2f} GB" if iso and iso.exists() else "?"
 
         self.sum_lbl.setText(
-            f"<table style='border-spacing:0 6px; width:100%;'>"
-            f"<tr><td style='width:180px;'>Output ISO Path:</td>"
-            f"<td style='font-weight:600;'>{iso}</td></tr>"
-            f"<tr><td>Compressed ISO Size:</td>"
-            f"<td>{iso_size}</td></tr>"
-            f"<tr><td>Selected Editions:</td>"
-            f"<td>{edition_str}</td></tr>"
-            f"<tr><td>Target USB Device:</td>"
-            f"<td style='font-weight:700;'>{usb.path if usb else '—'} ({usb.name if usb else ''})</td></tr>"
-            f"<tr><td>Boot Mode:</td>"
+            f"<table style='border-spacing:0 5px;'>"
+            f"<tr><td style='width:160px; color:#71717a;'>Output ISO</td>"
+            f"<td><b>{iso}</b></td></tr>"
+            f"<tr><td style='color:#71717a;'>ISO Size</td>"
+            f"<td>{sz}</td></tr>"
+            f"<tr><td style='color:#71717a;'>Editions</td>"
+            f"<td>{ed}</td></tr>"
+            f"<tr><td style='color:#71717a;'>Target USB</td>"
+            f"<td><b>{usb.path if usb else '—'}</b> ({usb.name if usb else ''})</td></tr>"
+            f"<tr><td style='color:#71717a;'>Boot Mode</td>"
             f"<td>{boot.value}</td></tr>"
-            f"<tr><td>Partitioning Strategy:</td>"
-            f"<td style='font-weight:600;'>"
-            f"{'Dual Partition Scheme (FAT32 EFI + NTFS Data)' if dual else 'Single Partition'}</td></tr>"
+            f"<tr><td style='color:#71717a;'>Partitioning</td>"
+            f"<td>{'Dual (FAT32 + NTFS)' if dual else 'Single'}</td></tr>"
             f"</table>"
         )
         self.confirm_chk.setChecked(False)
         self.next_enabled.emit(False)
 
 
-# ─────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════
 # STEP 7 — BURN
-# ─────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════
 
 class StepBurn(QWidget):
     def __init__(self, state: dict, parent_win: "MainWindow") -> None:
         super().__init__()
-        self.state = state
-        self.parent_win = parent_win
-        self._start_time = 0.0
+        self.state, self.parent_win = state, parent_win
+        self._t0 = 0.0
 
         root = QVBoxLayout(self)
         root.setSpacing(14)
         root.setContentsMargins(0, 0, 0, 0)
 
-        hdr = QLabel("Creating Bootable USB Drive…")
-        hdr.setProperty("heading", True)
-        root.addWidget(hdr)
-        root.addWidget(_sep())
-
         pcard = _card()
         pc = QVBoxLayout(pcard)
+        pc.setContentsMargins(20, 18, 20, 18)
         pc.setSpacing(12)
-        self.status_lbl = _label("Preparing target drive partitions…", bold=True, size=13)
+        self.status_lbl = _text("Preparing…", size=13, weight=600)
         self.bar = QProgressBar()
-        self.bar.setMinimumHeight(24)
         pc.addWidget(self.status_lbl)
         pc.addWidget(self.bar)
         root.addWidget(pcard)
 
-        stats = _card()
-        sl = QHBoxLayout(stats)
-        sl.setContentsMargins(16, 12, 16, 12)
-        self.stat_speed = self._stat(sl, "Write Speed", "—")
-        self.stat_eta   = self._stat(sl, "Estimated ETA", "—")
-        self.stat_done  = self._stat(sl, "Data Written", "—")
-        root.addWidget(stats)
+        grid = QHBoxLayout()
+        grid.setSpacing(8)
+        self.m_speed = _MetricCard("WRITE SPEED")
+        self.m_eta   = _MetricCard("ETA")
+        self.m_done  = _MetricCard("WRITTEN")
+        for m in (self.m_speed, self.m_eta, self.m_done):
+            grid.addWidget(m)
+        root.addLayout(grid)
 
-    @staticmethod
-    def _stat(layout: QHBoxLayout, key: str, val: str) -> QLabel:
-        w = QFrame()
-        w.setStyleSheet("border:1px solid #27272a; border-radius:8px; padding:8px 10px;")
-        c = QVBoxLayout(w)
-        c.setSpacing(3)
-        c.setContentsMargins(0, 0, 0, 0)
-        c.addWidget(_label(key, muted=True, size=11))
-        v = QLabel(val)
-        v.setStyleSheet("font-size:15px; font-weight:700; background:transparent;")
-        c.addWidget(v)
-        layout.addWidget(w)
-        return v
+        root.addStretch()
 
     def start(self) -> None:
         iso: Path | None = self.state.get("output_iso")
         usb: USBDevice | None = self.state.get("usb_device")
         if not iso or not usb:
-            QMessageBox.critical(self, "Missing Configuration", "Output ISO or target USB device is missing.")
+            QMessageBox.critical(self, "Error", "Missing ISO or USB device.")
             return
-        self._start_time = time.time()
+        self._t0 = time.time()
         mode: BootMode = self.state.get("boot_mode", BootMode.BOTH)
         self.worker = WorkerThread(
             USBCreator().create,
@@ -1318,33 +1298,29 @@ class StepBurn(QWidget):
             use_dual_partition=self.state.get("use_dual_partition", False),
             verify=True,
         )
-        self.worker.progress.connect(self._on_progress)
+        self.worker.progress.connect(self._prog)
         self.worker.finished_ok.connect(lambda _: self.parent_win.advance())
-        self.worker.failed.connect(
-            lambda m: QMessageBox.critical(self, "USB Creation Failed", m)
-        )
+        self.worker.failed.connect(lambda m: QMessageBox.critical(self, "Failed", m))
         self.worker.start()
 
-    def _on_progress(self, pct: float, msg: str) -> None:
+    def _prog(self, pct: float, msg: str) -> None:
         self.bar.setValue(int(pct))
         self.status_lbl.setText(msg)
-        elapsed = max(time.time() - self._start_time, 0.1)
+        elapsed = max(time.time() - self._t0, 0.1)
         if pct > 5:
             eta = elapsed / (pct / 100) - elapsed
-            self.stat_eta.setText(f"{int(eta // 60)}m {int(eta % 60)}s")
-            import re
+            self.m_eta.set_value(f"{int(eta // 60)}m {int(eta % 60)}s")
             m = re.search(r"([\d.]+)\s*MB/s", msg)
             if m:
-                self.stat_speed.setText(f"{m.group(1)} MB/s")
-            output_iso = self.state.get("output_iso")
-            total_size = output_iso.stat().st_size if output_iso and output_iso.exists() else 0
-            written_bytes = (pct / 100) * total_size
-            self.stat_done.setText(_fmt_gb(int(written_bytes)))
+                self.m_speed.set_value(f"{m.group(1)} MB/s")
+            out = self.state.get("output_iso")
+            total = out.stat().st_size if out and out.exists() else 0
+            self.m_done.set_value(_fmt_gb(int((pct / 100) * total)))
 
 
-# ─────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════
 # STEP 8 — DONE
-# ─────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════
 
 class StepResult(QWidget):
     def __init__(self, state: dict) -> None:
@@ -1355,76 +1331,64 @@ class StepResult(QWidget):
         root.setSpacing(14)
         root.setContentsMargins(0, 0, 0, 0)
 
-        # Celebration Header
-        hdr = QLabel("🎉  Bootable USB Successfully Created!")
-        hdr.setStyleSheet("font-size:22px; font-weight:800; letter-spacing:-0.5px;")
-        root.addWidget(hdr)
-        root.addWidget(_sep())
-
-        # Result Details Card
+        # Result card
         self.result_card = _card()
         rl = QVBoxLayout(self.result_card)
-        rl.setSpacing(8)
+        rl.setContentsMargins(20, 18, 20, 18)
+        rl.setSpacing(6)
         self.result_lbl = QLabel()
         self.result_lbl.setWordWrap(True)
-        self.result_lbl.setStyleSheet("font-size:13px; line-height:1.6;")
+        self.result_lbl.setStyleSheet("font-size:12.5px; line-height:1.7;")
         rl.addWidget(self.result_lbl)
         root.addWidget(self.result_card)
 
-        # Verification Checklist Card
-        chk_card = _card()
-        cl = QVBoxLayout(chk_card)
+        # Verification checklist
+        chk = _card("card_elevated")
+        cl = QVBoxLayout(chk)
+        cl.setContentsMargins(20, 16, 20, 16)
         cl.setSpacing(8)
-        cl.addWidget(_label("🛡️ System Integrity Verification Checklist", bold=True, size=13))
+        cl.addWidget(_text("Integrity Verification", size=13, weight=700))
         cl.addWidget(_sep())
-        for item in [
-            ("El Torito Bootloader Structure", True),
-            ("BCD Boot Configuration Database", True),
-            ("Post-Write File SHA256 Checksums", True),
-            ("EFI/UEFI Firmware Bootloader Files", True),
+        for item_text in [
+            "El Torito bootloader structure",
+            "BCD boot configuration database",
+            "Post-write SHA-256 file checksums",
+            "EFI/UEFI firmware bootloader files",
         ]:
             row = QHBoxLayout()
-            icon = QLabel("✔")
-            icon.setStyleSheet("font-size:14px; font-weight:800; background:transparent;")
-            icon.setFixedWidth(24)
-            row.addWidget(icon)
-            row.addWidget(_label(item[0]))
-            row.addStretch()
-            row.addWidget(_label("VERIFIED", bold=True, size=11))
+            row.addWidget(_text("✓", size=13, weight=700, color="#4ade80"))
+            row.addSpacing(8)
+            row.addWidget(_text(item_text, size=12, weight=400), 1)
+            row.addWidget(_badge("VERIFIED", "success"))
             cl.addLayout(row)
-        root.addWidget(chk_card)
+        root.addWidget(chk)
 
-        # Action Bar
+        # Actions
         act = QHBoxLayout()
-        vm_btn = QPushButton("  💻 Test in QEMU VM")
-        vm_btn.setProperty("secondary", True)
-        vm_btn.setMinimumHeight(38)
-        vm_btn.setMinimumWidth(150)
-        vm_btn.clicked.connect(self._test_vm)
-
-        eject_btn = QPushButton("  ⏏️ Safely Eject USB")
-        eject_btn.setProperty("secondary", True)
-        eject_btn.setMinimumHeight(38)
-        eject_btn.setMinimumWidth(150)
-        eject_btn.clicked.connect(self._eject)
-
-        act.addWidget(vm_btn)
-        act.addWidget(eject_btn)
+        act.setSpacing(8)
+        vm = _btn("Test in QEMU VM", "secondary")
+        vm.setFixedHeight(36)
+        vm.clicked.connect(self._test_vm)
+        eject = _btn("Safely eject USB", "secondary")
+        eject.setFixedHeight(36)
+        eject.clicked.connect(self._eject)
+        act.addWidget(vm)
+        act.addWidget(eject)
         act.addStretch()
         root.addLayout(act)
+
+        root.addStretch()
 
     def refresh(self) -> None:
         usb: USBDevice | None = self.state.get("usb_device")
         iso: Path | None = self.state.get("output_iso")
-        iso_size = f"{iso.stat().st_size / (1024**3):.2f} GB" if iso and iso.exists() else "—"
+        sz = f"{iso.stat().st_size / (1024**3):.2f} GB" if iso and iso.exists() else "—"
         self.result_lbl.setText(
-            f"<table style='border-spacing:0 6px; width:100%;'>"
-            f"<tr><td style='width:160px;'>Target USB Drive:</td>"
+            f"<table style='border-spacing:0 5px;'>"
+            f"<tr><td style='width:140px; color:#71717a;'>USB Drive</td>"
             f"<td><b>{usb.path if usb else '—'}</b> ({usb.name if usb else ''})</td></tr>"
-            f"<tr><td>Compressed ISO Source:</td>"
-            f"<td>{iso}</td></tr>"
-            f"<tr><td>Total Size Written:</td>"
-            f"<td>{iso_size}</td></tr>"
+            f"<tr><td style='color:#71717a;'>ISO Source</td><td>{iso}</td></tr>"
+            f"<tr><td style='color:#71717a;'>Size Written</td><td>{sz}</td></tr>"
             f"</table>"
         )
         _fade_in(self.result_card)
@@ -1432,83 +1396,117 @@ class StepResult(QWidget):
     def _test_vm(self) -> None:
         iso: Path | None = self.state.get("output_iso")
         if not iso or not iso.exists():
-            QMessageBox.warning(self, "No ISO Found", "Output ISO file is missing.")
+            QMessageBox.warning(self, "No ISO", "Output ISO not found.")
             return
         from winiso_toolkit.utils.vm import QEMUTester
-        tester = QEMUTester()
-        if not tester.is_qemu_available():
-            QMessageBox.information(
-                self, "QEMU Not Found",
-                "QEMU system emulator is not installed.\n\n"
-                "  Linux:   sudo apt install qemu-system-x86\n"
-                "  Windows: https://www.qemu.org/download/\n"
-                "  macOS:   brew install qemu",
-            )
+        t = QEMUTester()
+        if not t.is_qemu_available():
+            QMessageBox.information(self, "QEMU Not Found", "Install QEMU to test ISOs in a VM.")
             return
         try:
-            tester.launch_test_vm(iso)
-        except Exception as exc:
-            QMessageBox.critical(self, "VM Error", str(exc))
+            t.launch_test_vm(iso)
+        except Exception as e:
+            QMessageBox.critical(self, "VM Error", str(e))
 
     def _eject(self) -> None:
         usb: USBDevice | None = self.state.get("usb_device")
         if not usb:
-            QMessageBox.warning(self, "No USB Found", "No target USB drive on record.")
             return
         from winiso_toolkit.usb.ejector import USBEjector
         ok, msg = USBEjector().safe_eject(usb.path)
-        if ok:
-            QMessageBox.information(self, "Safe to Remove", msg)
-        else:
-            QMessageBox.warning(self, "Eject Warning", msg)
+        (QMessageBox.information if ok else QMessageBox.warning)(self, "Eject", msg)
 
 
-# ─────────────────────────────────────────────────────────────
-# MAIN WINDOW WITH SIDEBAR & COLLAPSIBLE DRAWER
-# ─────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════
+# MAIN WINDOW — Premium Shell
+# ═══════════════════════════════════════════════════════════
+
+# Page header definitions: (title, subtitle)
+_PAGE_HEADERS = [
+    ("ISO Source", "Select or drag your official Windows 10/11 ISO file to begin."),
+    ("Select Editions", "Choose which Windows editions to keep in the final image."),
+    ("Customization", "Configure hardware bypasses, user defaults, and driver injection."),
+    ("Compressing ISO", "Building and compressing your customized Windows image."),
+    ("Target USB", "Select and configure the destination USB flash drive."),
+    ("Confirm & Review", "Review your configuration before writing to USB."),
+    ("Building Media", "Writing the bootable installer to your USB drive."),
+    ("Complete", "Your bootable Windows USB drive has been created successfully."),
+]
+
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("WinISO Toolkit Supercharged v2.0")
-        self.setMinimumSize(960, 660)
-        self.resize(1020, 700)
+        self.setWindowTitle("WinISO Toolkit  ·  v2.0")
+        self.setMinimumSize(980, 660)
+        self.resize(1040, 720)
         self.state: dict = {}
         self.is_dark = True
 
+        # Central widget
         central = QWidget()
+        central.setStyleSheet("background-color: transparent;")
         self.setCentralWidget(central)
-        main_h_layout = QHBoxLayout(central)
-        main_h_layout.setContentsMargins(0, 0, 0, 0)
-        main_h_layout.setSpacing(0)
+        shell = QHBoxLayout(central)
+        shell.setContentsMargins(0, 0, 0, 0)
+        shell.setSpacing(0)
 
-        # ── 1. Left Sidebar Navigation ────────────────────────
+        # ── LEFT SIDEBAR ──────────────────────────────────
+        sidebar_container = QVBoxLayout()
+        sidebar_container.setContentsMargins(0, 0, 0, 0)
+        sidebar_container.setSpacing(0)
+
         self.sidebar = SidebarWidget()
 
-        # Theme Switcher Button at bottom of sidebar
-        self.theme_btn = QPushButton("  🌙 Dark Mode")
-        self.theme_btn.setProperty("secondary", True)
-        self.theme_btn.setMinimumHeight(36)
-        self.theme_btn.setMinimumWidth(180)
+        # Theme toggle at bottom
+        theme_footer = QFrame()
+        theme_footer.setObjectName("sidebar_root")
+        tfl = QVBoxLayout(theme_footer)
+        tfl.setContentsMargins(10, 8, 10, 10)
+        self.theme_btn = QPushButton("  ◐   Dark mode")
+        self.theme_btn.setObjectName("theme_toggle_btn")
+        self.theme_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.theme_btn.setFixedHeight(32)
         self.theme_btn.clicked.connect(self._toggle_theme)
+        tfl.addWidget(self.theme_btn)
 
-        sb_layout = self.sidebar.layout()
-        if sb_layout:
-            theme_box = QFrame()
-            tbl = QVBoxLayout(theme_box)
-            tbl.setContentsMargins(12, 8, 12, 12)
-            tbl.addWidget(self.theme_btn)
-            sb_layout.addWidget(theme_box)
+        sidebar_frame = QFrame()
+        sidebar_frame.setObjectName("sidebar_root")
+        sf_layout = QVBoxLayout(sidebar_frame)
+        sf_layout.setContentsMargins(0, 0, 0, 0)
+        sf_layout.setSpacing(0)
+        sf_layout.addWidget(self.sidebar, 1)
+        sf_layout.addWidget(theme_footer)
 
-        main_h_layout.addWidget(self.sidebar)
+        shell.addWidget(sidebar_frame)
 
-        # ── 2. Right Canvas Area ──────────────────────────────
+        # ── RIGHT CONTENT AREA ────────────────────────────
+        right = QVBoxLayout()
+        right.setContentsMargins(0, 0, 0, 0)
+        right.setSpacing(0)
+
+        # Content canvas
         canvas = QWidget()
-        canvas_l = QVBoxLayout(canvas)
-        canvas_l.setContentsMargins(20, 16, 20, 12)
-        canvas_l.setSpacing(12)
+        canvas_layout = QVBoxLayout(canvas)
+        canvas_layout.setContentsMargins(24, 20, 24, 12)
+        canvas_layout.setSpacing(14)
 
-        # QStackedWidget holding Scroll-wrapped step pages
+        # Page header (title + subtitle)
+        self.page_title = QLabel()
+        self.page_title.setObjectName("page_title")
+        self.page_subtitle = QLabel()
+        self.page_subtitle.setObjectName("page_subtitle")
+        self.page_subtitle.setWordWrap(True)
+        canvas_layout.addWidget(self.page_title)
+        canvas_layout.addWidget(self.page_subtitle)
+
+        # Step progress bar
+        self.step_bar = StepProgressBar()
+        canvas_layout.addWidget(self.step_bar)
+
+        canvas_layout.addSpacing(4)
+
+        # Stacked pages
         self.stack = QStackedWidget()
         self.step_iso      = StepIsoSelect(self.state, self.log_message)
         self.step_editions = StepEditionSelect(self.state)
@@ -1526,110 +1524,104 @@ class MainWindow(QMainWindow):
         ):
             self.stack.addWidget(self._wrap_scroll(w))
 
-        canvas_l.addWidget(self.stack, 1)
+        canvas_layout.addWidget(self.stack, 1)
 
-        # Navigation Bar
+        # Navigation buttons
         nav = QHBoxLayout()
-        self.back_btn = QPushButton("  ← Previous Step")
-        self.back_btn.setProperty("secondary", True)
-        self.back_btn.setMinimumWidth(140)
-        self.back_btn.setMinimumHeight(40)
-
-        self.next_btn = QPushButton("Next Step  →")
-        self.next_btn.setMinimumWidth(150)
-        self.next_btn.setMinimumHeight(40)
-
+        nav.setSpacing(10)
+        self.back_btn = _btn("← Back", "ghost")
+        self.back_btn.setFixedHeight(38)
+        self.back_btn.setMinimumWidth(100)
+        self.next_btn = _btn("Continue →", "primary")
+        self.next_btn.setFixedHeight(38)
+        self.next_btn.setMinimumWidth(140)
         self.back_btn.clicked.connect(self.go_back)
         self.next_btn.clicked.connect(self.go_next)
-
         nav.addWidget(self.back_btn)
         nav.addStretch()
         nav.addWidget(self.next_btn)
-        canvas_l.addLayout(nav)
+        canvas_layout.addLayout(nav)
 
-        # ── 3. Collapsible Bottom Console Drawer ──────────────
-        console_box = QFrame()
-        console_box.setObjectName("card_frame")
-        cl = QVBoxLayout(console_box)
-        cl.setContentsMargins(12, 6, 12, 6)
-        cl.setSpacing(6)
+        right.addWidget(canvas, 1)
 
-        # Drawer Status Header
+        # ── BOTTOM CONSOLE DRAWER ─────────────────────────
+        console_frame = QFrame()
+        console_frame.setObjectName("console_container")
+        cfl = QVBoxLayout(console_frame)
+        cfl.setContentsMargins(24, 6, 24, 6)
+        cfl.setSpacing(4)
+
+        # Console toolbar
         ctb = QHBoxLayout()
-        dot_lbl = QLabel("🟢")
-        dot_lbl.setStyleSheet("font-size:12px; background:transparent;")
-        title_lbl = QLabel("Live Process Output Console")
-        title_lbl.setStyleSheet("font-size:12px; font-weight:700; background:transparent;")
-        
-        self.console_toggle = QPushButton("  👁️ Show Terminal")
-        self.console_toggle.setProperty("secondary", True)
-        self.console_toggle.setMinimumWidth(130)
-        self.console_toggle.setFixedHeight(30)
-        self.console_toggle.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
-        self.console_toggle.clicked.connect(self._toggle_console)
-
-        clear_btn = QPushButton("  🗑️ Clear Log")
-        clear_btn.setProperty("secondary", True)
-        clear_btn.setMinimumWidth(110)
-        clear_btn.setFixedHeight(30)
-        clear_btn.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
-        clear_btn.clicked.connect(lambda: self.console.clear())
-
-        ctb.addWidget(dot_lbl)
-        ctb.addWidget(title_lbl)
+        ctb.setSpacing(8)
+        dot = _text("●", size=8, color="#4ade80")
+        ctb.addWidget(dot)
+        ctb.addWidget(_text("Console", size=11, weight=600))
         ctb.addStretch()
-        ctb.addWidget(self.console_toggle)
+        self.toggle_console_btn = QPushButton("Show")
+        self.toggle_console_btn.setObjectName("console_btn")
+        self.toggle_console_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.toggle_console_btn.clicked.connect(self._toggle_console)
+        clear_btn = QPushButton("Clear")
+        clear_btn.setObjectName("console_btn")
+        clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        clear_btn.clicked.connect(lambda: self.console.clear())
+        ctb.addWidget(self.toggle_console_btn)
         ctb.addWidget(clear_btn)
-        cl.addLayout(ctb)
+        cfl.addLayout(ctb)
 
-        # Text Console — Default Hidden (Collapsed Drawer)
         self.console = QTextEdit()
-        self.console.setObjectName("live_log_console")
+        self.console.setObjectName("console_output")
         self.console.setReadOnly(True)
-        self.console.setMaximumHeight(130)
-        self.console.setMinimumHeight(130)
+        self.console.setFixedHeight(120)
         self.console.setVisible(False)
-        cl.addWidget(self.console)
+        cfl.addWidget(self.console)
 
-        canvas_l.addWidget(console_box)
-        main_h_layout.addWidget(canvas, 1)
+        right.addWidget(console_frame)
+        shell.addLayout(right, 1)
 
-        # Logging bridge
+        # ── LOGGING ───────────────────────────────────────
         self.log_handler = QObjectLogHandler()
         self.log_handler.new_log.connect(self.console.append)
         logging.getLogger("winiso_toolkit").addHandler(self.log_handler)
 
-        # Signal wiring
+        # ── SIGNAL WIRING ─────────────────────────────────
         self.step_iso.next_enabled.connect(self._set_next)
         self.step_editions.next_enabled.connect(self._set_next)
         self.step_usb.next_enabled.connect(self._set_next)
         self.step_confirm.next_enabled.connect(self._set_next)
+        self.sidebar.step_clicked.connect(self._sidebar_nav)
 
         self._step = 0
         self._update_nav()
+
+    # ── Theme ─────────────────────────────────────────────
 
     def _toggle_theme(self) -> None:
         self.is_dark = not self.is_dark
         app = QApplication.instance()
         if app:
             app.setStyleSheet(DARK_THEME_QSS if self.is_dark else LIGHT_THEME_QSS)
-        self.theme_btn.setText("  🌙 Dark Mode" if self.is_dark else "  ☀️ Light Mode")
+        self.theme_btn.setText("  ◐   Dark mode" if self.is_dark else "  ◑   Light mode")
+
+    # ── Layout helpers ────────────────────────────────────
 
     @staticmethod
     def _wrap_scroll(widget: QWidget) -> QScrollArea:
         sa = QScrollArea()
         sa.setWidgetResizable(True)
         sa.setWidget(widget)
-        sa.setStyleSheet("background:transparent; border:none;")
         return sa
+
+    # ── Navigation ────────────────────────────────────────
 
     def log_message(self, msg: str) -> None:
         logging.getLogger("winiso_toolkit").info(msg)
 
     def _toggle_console(self) -> None:
-        visible = self.console.isVisible()
-        self.console.setVisible(not visible)
-        self.console_toggle.setText("  👁️ Hide Terminal" if not visible else "  👁️ Show Terminal")
+        vis = self.console.isVisible()
+        self.console.setVisible(not vis)
+        self.toggle_console_btn.setText("Hide" if not vis else "Show")
 
     def _set_next(self, enabled: bool) -> None:
         if self._step not in (3, 6, 7):
@@ -1637,18 +1629,33 @@ class MainWindow(QMainWindow):
 
     def _update_nav(self) -> None:
         self.sidebar.set_step(self._step)
+        self.step_bar.set_step(self._step)
+
+        # Page header
+        title, subtitle = _PAGE_HEADERS[self._step]
+        self.page_title.setText(title)
+        self.page_subtitle.setText(subtitle)
+
         auto = self._step in (3, 6, 7)
         self.back_btn.setEnabled(self._step > 0 and not auto)
         self.next_btn.setEnabled(not auto)
+
         if self._step == 7:
-            self.next_btn.setText("Finish & Close  ✓")
+            self.next_btn.setText("Done ✓")
         elif self._step == 5:
-            self.next_btn.setText("⚡ Start Build")
+            self.next_btn.setText("Start build →")
         else:
-            self.next_btn.setText("Next Step  →")
+            self.next_btn.setText("Continue →")
 
     def set_back_enabled(self, v: bool) -> None:
         self.back_btn.setEnabled(v)
+
+    def _sidebar_nav(self, idx: int) -> None:
+        """Allow clicking completed steps to go back."""
+        if idx < self._step:
+            self._step = idx
+            self.stack.setCurrentIndex(self._step)
+            self._update_nav()
 
     def go_back(self) -> None:
         if self._step > 0:
@@ -1666,7 +1673,7 @@ class MainWindow(QMainWindow):
         if self._step == 1:
             self.step_editions.save_selection()
             if not self.state.get("indices"):
-                QMessageBox.warning(self, "No Editions Selected", "Please select at least one Windows edition.")
+                QMessageBox.warning(self, "No Editions", "Select at least one edition.")
                 return
         elif self._step == 2:
             self.step_custom.save_settings()
